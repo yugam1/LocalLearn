@@ -1,0 +1,10 @@
+# Machine-specific config — never commit real .env
+.env
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# OS
+.DS_Store
