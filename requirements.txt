@@ -6,5 +6,6 @@
 # Pinned to what Day 2 (scripts/day2_embeddings.py) needs. Ollama itself is a
 # separate local service, not a pip package.
 
-requests==2.34.2   # HTTP calls to the Ollama /api endpoints
-numpy==2.5.1       # vectors + cosine similarity by hand
+requests==2.34.2         # HTTP calls to the Ollama /api endpoints
+numpy==2.5.1             # vectors + cosine similarity by hand
+qdrant-client==1.18.0    # Day 3: talk to the Qdrant vector DB
