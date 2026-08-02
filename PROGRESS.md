@@ -17,8 +17,8 @@ Two-tier hybrid (details + setup commands in `START_HERE.md` → "Your rig"):
 - **ASUS ROG G15 (Ubuntu)** = server tier. Hostname `yugam-ROG-Strix-G512LI-G512LI`. GPU (GTX 1650 Ti, 4GB VRAM), CUDA confirmed working.
   - **LAN IP: `192.168.1.19`**
   - Ollama runs as a **systemd service** (`ollama.service`, drop-in at `/etc/systemd/system/ollama.service.d/override.conf` sets `OLLAMA_HOST=0.0.0.0:11434`) — already bound to all interfaces, confirmed via `ss -tlnp` (`*:11434`). Survives reboot, no manual `ollama serve` needed.
-  - Docker is installed but **Qdrant is not up yet** (that's Day 3) — `docker ps` currently empty.
-  - Firewall (`ufw`) state not confirmed from this session (needs sudo password this session didn't have). If the Mac can't reach `192.168.1.19:11434`, check `sudo ufw status` on the ASUS and `sudo ufw allow 11434` (and `6333` once Qdrant is up).
+  - Qdrant **is up** in Docker (container `stoic_tesla`, `qdrant/qdrant:1.18.3`), bound to `0.0.0.0:6333-6334`, confirmed reachable on the LAN IP (`curl http://192.168.1.19:6333/` responds). No collections loaded yet (`/collections` empty) — data loading is still Day 3 work, the server itself just happens to already be running.
+  - Firewall (`ufw`) state not confirmed from this session (needs sudo password this session didn't have). Both 11434 and 6333 are reachable on the LAN as tested, so if that changes later, check `sudo ufw status` on the ASUS.
   - Repo remote: `git@github.com:yugam1/LocalLearn.git`.
 - **Mac (Intel MBP 2019, i7-9750H, 16GB)** = dev/app tier. All code + git live here. Claude Code runs here (single dev brain).
   - Client points at ASUS via `OLLAMA_URL` / `QDRANT_URL`. Quick connect, once this repo is cloned on the Mac:
