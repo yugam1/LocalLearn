@@ -1,0 +1,10 @@
+# LocalLearn — Python deps for the scripts/ exercises.
+# Install into the repo's virtualenv:
+#   python3 -m venv .venv && source .venv/bin/activate
+#   pip install -r requirements.txt
+#
+# Pinned to what Day 2 (scripts/day2_embeddings.py) needs. Ollama itself is a
+# separate local service, not a pip package.
+
+requests==2.34.2   # HTTP calls to the Ollama /api endpoints
+numpy==2.5.1       # vectors + cosine similarity by hand

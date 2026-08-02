@@ -55,14 +55,16 @@ SENTENCES = [
     "She sat on the river bank watching the water.",
     "He deposited his paycheck at the bank downtown.",
     "The cat slept on the warm windowsill all afternoon.",
-    
+    "I visited the Taj Mahal in India last summer.",
+    "The Taj Mahal is a famous mausoleum located in Agra, India.",
+    "The food in Hotel Taj in Mumbai was delicious and authentic.",
     # TODO(you): add 3-5 sentences designed to fool the embedder —
     #   negations, antonyms in the same topic, same word / different meaning,
     #   different words / same meaning. Predict the score BEFORE you run.
 ]
 
 # The query you're "searching" for. Change this and re-run to feel retrieval.
-QUERY = "How can I recover access to my account?"
+QUERY = "Suggest me some good restaurants in Mumbai."
 
 
 def embed(text: str) -> np.ndarray:

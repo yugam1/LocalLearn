@@ -38,12 +38,12 @@ Code + Claude Code = **Mac only** (the plan). ASUS is headless infra.
 
 ## Status
 
-**Current day:** Day 1 done. Ready for Day 2 (embeddings by hand).
+**Current day:** Day 2 done. Ready for Day 3 (Qdrant in Docker).
 **Last updated:** 2026-08-02
 
 ### Week 1 checklist
 - [x] **Day 1** — Ollama up; talk to API; observe tokens/context; break context window; write `notes/day1.md`
-- [ ] **Day 2** — embeddings by hand (`nomic-embed-text`), cosine similarity script; find a false-positive match
+- [x] **Day 2** — embeddings by hand (`nomic-embed-text`), cosine similarity script; found false pos/neg + polarity blind spot
 - [ ] **Day 3** — Qdrant in Docker; real similarity search; compare vs numpy brute force → **first hybrid client/server day**
 - [ ] **Day 4** — full RAG pipeline (ingest → chunk → embed → store → retrieve → answer w/ citations)
 - [ ] **Day 5** — break RAG 4 ways: chunking / retrieval / hallucination / stale index
@@ -53,6 +53,13 @@ Code + Claude Code = **Mac only** (the plan). ASUS is headless infra.
 ---
 
 ## Log (newest first)
+
+### 2026-08-02 — Day 2 done
+- Built `scripts/day2_embeddings.py` (nomic-embed-text, 768-D, hand-rolled cosine, pairwise matrix + query search). Added `.env` / `.env.example` / `.gitignore` and a zero-dep dotenv loader; created `.venv` (requests, numpy).
+- Ran client→server: dev on Mac, embeddings on ASUS (`192.168.1.19`) — first real hybrid run, a day early.
+- Key findings (in `notes/day2.md`): antonyms/negation are the blind spot — `rose`↔`fell`=0.856 (highest of all pairs), `love`↔`do-not-love`=0.773. Polysemy ("bank") was NOT fooled (0.497). User's Taj trap partially worked (monument↔hotel 0.631 ≈ genuine 0.648).
+- **Dangerous search result:** query "recover access to my account" ranked "permanently delete my account" #1 (0.730) over "reset password" (0.714) — opposite-intent doc wins. Plus false negative: correct `reset↔forgot-credentials` (0.677) scored below wrong `reset↔delete` (0.742).
+- **Next:** Day 3 — Qdrant in Docker on the ASUS; move the numpy loop into a real vector DB over HTTP; compare DB results vs brute-force.
 
 ### 2026-08-02 — Day 1 done
 - Confirmed: running directly on the ASUS (ROG Strix, GTX 1650 Ti), Ollama as a systemd service bound to `*:11434`.
