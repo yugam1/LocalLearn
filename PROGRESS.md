@@ -14,25 +14,35 @@
 
 Two-tier hybrid (details + setup commands in `START_HERE.md` → "Your rig"):
 
-- **ASUS ROG G15 (Ubuntu)** = server tier. GPU (GTX 1650 Ti 4GB, CUDA), 16GB RAM.
-  - Runs Ollama (`OLLAMA_HOST=0.0.0.0:11434`) + Qdrant (Docker, :6333).
-  - LAN IP: `__________` ← fill in (`hostname -I`)
+- **ASUS ROG G15 (Ubuntu)** = server tier. Hostname `yugam-ROG-Strix-G512LI-G512LI`. GPU (GTX 1650 Ti, 4GB VRAM), CUDA confirmed working.
+  - **LAN IP: `192.168.1.19`**
+  - Ollama runs as a **systemd service** (`ollama.service`, drop-in at `/etc/systemd/system/ollama.service.d/override.conf` sets `OLLAMA_HOST=0.0.0.0:11434`) — already bound to all interfaces, confirmed via `ss -tlnp` (`*:11434`). Survives reboot, no manual `ollama serve` needed.
+  - Docker is installed but **Qdrant is not up yet** (that's Day 3) — `docker ps` currently empty.
+  - Firewall (`ufw`) state not confirmed from this session (needs sudo password this session didn't have). If the Mac can't reach `192.168.1.19:11434`, check `sudo ufw status` on the ASUS and `sudo ufw allow 11434` (and `6333` once Qdrant is up).
+  - Repo remote: `git@github.com:yugam1/LocalLearn.git`.
 - **Mac (Intel MBP 2019, i7-9750H, 16GB)** = dev/app tier. All code + git live here. Claude Code runs here (single dev brain).
-  - Client points at ASUS via `OLLAMA_URL` / `QDRANT_URL`.
+  - Client points at ASUS via `OLLAMA_URL` / `QDRANT_URL`. Quick connect, once this repo is cloned on the Mac:
+    ```bash
+    git clone git@github.com:yugam1/LocalLearn.git
+    export OLLAMA_URL="http://192.168.1.19:11434"
+    curl $OLLAMA_URL/api/tags   # should list llama3.2:3b, llama3.1:8b, nomic-embed-text, qwen2.5-coder:7b
+    ```
 
 ## Working-across-machines rule
 
-Code + Claude Code = **Mac only**. ASUS is headless infra. If a second Claude session is ever run on the ASUS, it shares state ONLY through this file + git — conversation histories do NOT sync.
+Code + Claude Code = **Mac only** (the plan). ASUS is headless infra.
+
+> **Deviation note (2026-08-02):** Day 1 was actually driven from a Claude Code session running **directly on the ASUS** (this repo is checked out at `/media/yugam/D1/Workspace/Projects/LocalLearn` there too), not the Mac — convenient for Day 1 specifically since `START_HERE.md` already recommends doing Day 1 locally on the ASUS. This ASUS-side session ran the curl/API exercises live via Bash and wrote the real measured results into `notes/day1.md` directly, rather than the user running them by hand. From Day 3 onward (client/server split), switch back to the Mac as the single dev brain per the rule below — if a Claude session is ever run on the ASUS again, it shares state with the Mac session ONLY through this file + git; conversation histories do NOT sync.
 
 ---
 
 ## Status
 
-**Current day:** Day 0 (setup) — not started yet.
+**Current day:** Day 1 done. Ready for Day 2 (embeddings by hand).
 **Last updated:** 2026-08-02
 
 ### Week 1 checklist
-- [ ] **Day 1** — Ollama up; talk to API; observe tokens/context; break context window ("lost in the middle"); write `notes/day1.md`
+- [x] **Day 1** — Ollama up; talk to API; observe tokens/context; break context window; write `notes/day1.md`
 - [ ] **Day 2** — embeddings by hand (`nomic-embed-text`), cosine similarity script; find a false-positive match
 - [ ] **Day 3** — Qdrant in Docker; real similarity search; compare vs numpy brute force → **first hybrid client/server day**
 - [ ] **Day 4** — full RAG pipeline (ingest → chunk → embed → store → retrieve → answer w/ citations)
@@ -43,6 +53,14 @@ Code + Claude Code = **Mac only**. ASUS is headless infra. If a second Claude se
 ---
 
 ## Log (newest first)
+
+### 2026-08-02 — Day 1 done
+- Confirmed: running directly on the ASUS (ROG Strix, GTX 1650 Ti), Ollama as a systemd service bound to `*:11434`.
+- Ran Steps 2-4 live: 3b hit ~40.5 tok/s fully on GPU; 8b (5.9GB) didn't fit in 4GB VRAM, split 45%/55% CPU/GPU via `ollama ps`, dropped to ~4.25 tok/s (~9.5x slower) — first concrete "memory is the wall" data point.
+- Contradictory system prompt ("one word" + "three paragraphs") didn't cleanly resolve either way — model blended both, an unpredictable-output lesson.
+- Context-window test: model's `num_ctx` is 4096. Below the cap, recall was solid at both start and middle placement. Over the cap, it wasn't gradual "lost in the middle" degradation — it was a hard truncation cliff (prompt_eval_count capped at exactly 4096, secret word dropped outright).
+- Filled in real observations + the three answers in `notes/day1.md` (was previously just the blank template).
+- **Next:** Day 2 — embeddings by hand with `nomic-embed-text` (already pulled), cosine similarity script, find a false-positive semantic match.
 
 ### 2026-08-02 — setup / planning
 - Wrote `START_HERE.md` (curriculum + priorities + Day-1 steps).
