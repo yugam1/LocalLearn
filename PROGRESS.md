@@ -38,14 +38,14 @@ Code + Claude Code = **Mac only** (the plan). ASUS is headless infra.
 
 ## Status
 
-**Current day:** Day 2 done. Ready for Day 3 (Qdrant in Docker).
+**Current day:** Day 3 done. Day 4 (full RAG) scaffolded — script + docs + notes template written, not yet run.
 **Last updated:** 2026-08-02
 
 ### Week 1 checklist
 - [x] **Day 1** — Ollama up; talk to API; observe tokens/context; break context window; write `notes/day1.md`
 - [x] **Day 2** — embeddings by hand (`nomic-embed-text`), cosine similarity script; found false pos/neg + polarity blind spot
-- [ ] **Day 3** — Qdrant in Docker; real similarity search; compare vs numpy brute force → **first hybrid client/server day**
-- [ ] **Day 4** — full RAG pipeline (ingest → chunk → embed → store → retrieve → answer w/ citations)
+- [x] **Day 3** — Qdrant in Docker; real similarity search; matched numpy brute force exactly (0.00000 gap), numpy ~74× faster at N=13
+- [~] **Day 4** — full RAG pipeline (ingest → chunk → embed → store → retrieve → answer w/ citations) — **scaffolded, not yet run**
 - [ ] **Day 5** — break RAG 4 ways: chunking / retrieval / hallucination / stale index
 - [ ] **Day 6** — improve retrieval (hybrid BM25+vector, reranker); measure if quality actually improved
 - [ ] **Day 7** — eval harness: 20-Q gold set, exact-match + LLM-as-judge, produce a %
@@ -53,6 +53,11 @@ Code + Claude Code = **Mac only** (the plan). ASUS is headless infra.
 ---
 
 ## Log (newest first)
+
+### 2026-08-02 — Day 3 done, Day 4 scaffolded
+- **Day 3 run** (`scripts/day3_qdrant.py`, ASUS): Qdrant matched the numpy brute-force cosine loop exactly — same top-5 order, max score gap `0.00000`. Latency at N=13: Qdrant `11.88 ms` vs numpy `0.16 ms` (~74× slower — the index is pure overhead at tiny N; crossover is at large N). Findings written to `notes/day3.md`. Recorded run (`result/day3.txt`, script default `QUERY = "How can I recover access to my account?"`, latency 11.21 ms vs 0.20 ms) **reproduced the exact Day-2 danger in a real vector DB**: "How do I permanently delete my account?" ranked #1 (0.730) for a *recovery* query, above "reset my password" (0.714) and "forgot my login credentials" (0.655). Opposite-intent, most-destructive doc wins on topic/keyword overlap — the bug got persisted into the DB, not fixed by it.
+- **Day 4 scaffold** (not yet run): built the full RAG pipeline `scripts/day4_rag.py` (ingest `../docs` → 120-word overlapping chunks → embed → Qdrant `day4_beacon_docs` → top-k retrieve → grounded generate w/ `[n]` citations). Corpus is a **fictional product "Beacon"** (`docs/overview.md`, `docs/pricing.md` w/ a table, `docs/troubleshooting.md`) — deliberately proprietary so retrieval is the only source of truth. `GEN_MODEL` env defaults to `llama3.1:8b`. Script prints retrieved chunks BEFORE the answer (the retrieval-vs-generation debugging seam for Day 5). `notes/day4.md` template has blanks for happy-path + grounding/out-of-corpus test.
+- **Next:** user runs `day4_rag.py` against the ASUS, then we fill `notes/day4.md` from the real output (happy-path query + the out-of-corpus "Salesforce" grounding test).
 
 ### 2026-08-02 — Day 2 done
 - Built `scripts/day2_embeddings.py` (nomic-embed-text, 768-D, hand-rolled cosine, pairwise matrix + query search). Added `.env` / `.env.example` / `.gitignore` and a zero-dep dotenv loader; created `.venv` (requests, numpy).
