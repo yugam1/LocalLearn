@@ -6,44 +6,22 @@ Yesterday you WERE the vector DB: you held every vector in a Python list and ran
 a cosine loop by hand. Today you hand that job to Qdrant and ask one blunt
 question: does the database return the SAME ranking my numpy loop does?
 
-If yes (it will, at this scale), then the DB didn't buy you *better answers* —
-it bought you speed, persistence, and metadata filtering at scale. Knowing
-exactly what a tool does and does NOT buy you is the whole FDE game.
+If yes (it will, at this scale), then the DB didn't buy you *better answers* — it
+bought you speed, persistence, and metadata filtering at scale. Knowing exactly
+what a tool does and does NOT buy you is the whole FDE game.
 
-We use the official `qdrant-client` (what real projects use). It's a thin wrapper
-over Qdrant's REST/gRPC API — the calls below map 1:1 to HTTP endpoints:
-    client.create_collection(...)   -> PUT  /collections/{name}
-    client.upsert(...)              -> PUT  /collections/{name}/points
-    client.query_points(...)        -> POST /collections/{name}/points/query
-Nothing hidden — the library just saves you hand-building JSON.
+Note the split this file demonstrates: VectorStore.load()/search() work at the
+raw-vector level, so we keep our OWN `vecs` list to run the brute-force numpy
+check against Qdrant's answer. Day 4/5 will drive the same class at the text
+level instead. Every run tees to result/day3.txt.
 """
 import os
-import sys
 import time
-import requests
-import numpy as np
-from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams, PointStruct
 
+from locallearn import Settings, OllamaClient, VectorStore, cosine, tee_stdout
 
-def load_dotenv(path=".env"):
-    """Tiny stdlib .env loader — no external dep. Real env vars win over the file."""
-    if not os.path.exists(path):
-        return
-    with open(path) as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, _, val = line.partition("=")
-            os.environ.setdefault(key.strip(), val.strip())
-
-
-load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
-
-OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
-EMBED_MODEL = "nomic-embed-text"
+settings = Settings.from_env()
+ollama = OllamaClient(settings.ollama_url, settings.embed_model)
 COLLECTION = "day3_sentences"
 
 # Same corpus as Day 2 so you can compare behaviour directly. The traps carry
@@ -69,70 +47,20 @@ QUERY = "How can I recover access to my account?"
 TOP_K = 5
 
 
-# ── Embedding: identical to Day 2. One sentence -> one 768-D vector. ──────────
-def embed(text: str) -> np.ndarray:
-    resp = requests.post(
-        f"{OLLAMA_URL}/api/embeddings",
-        json={"model": EMBED_MODEL, "prompt": text},
-        timeout=60,
-    )
-    resp.raise_for_status()
-    return np.array(resp.json()["embedding"], dtype=np.float32)
-
-
-def cosine(a: np.ndarray, b: np.ndarray) -> float:
-    """The exact same 'by hand' metric from Day 2 — our ground truth today."""
-    return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
-
-
-def connect() -> QdrantClient:
-    """Connect + fail loudly with the fix if the container isn't up."""
-    try:
-        client = QdrantClient(url=QDRANT_URL, timeout=10)
-        client.get_collections()  # forces a real round-trip
-        return client
-    except Exception as e:
-        sys.exit(
-            f"Can't reach Qdrant at {QDRANT_URL} — is the container up? ({e})\n"
-            f"On the ASUS run:\n"
-            f"  docker run -d --name qdrant -p 6333:6333 -p 6334:6334 \\\n"
-            f"    -v $(pwd)/qdrant_storage:/qdrant/storage qdrant/qdrant"
-        )
-
-
 def main() -> None:
-    client = connect()
+    store = VectorStore.connect(settings.qdrant_url, COLLECTION)  # no embedder: vector-level
 
-    print(f"Embedding {len(SENTENCES)} sentences with {EMBED_MODEL} @ {OLLAMA_URL}")
-    vecs = [embed(s) for s in SENTENCES]
-    dim = len(vecs[0])
-    print(f"Vector dim: {dim}. Loading into Qdrant @ {QDRANT_URL}\n")
+    print(f"Embedding {len(SENTENCES)} sentences with {settings.embed_model} "
+          f"@ {settings.ollama_url}")
+    vecs = [ollama.embed(s) for s in SENTENCES]
+    dim = store.load(vecs, [{"text": s} for s in SENTENCES])
+    print(f"Vector dim: {dim}. Loaded into Qdrant @ {settings.qdrant_url}\n")
 
-    # Drop + create so re-runs are clean. Cosine distance = same metric as Day 2.
-    if client.collection_exists(COLLECTION):
-        client.delete_collection(COLLECTION)
-    client.create_collection(
-        collection_name=COLLECTION,
-        vectors_config=VectorParams(size=dim, distance=Distance.COSINE),
-    )
-
-    # Load every sentence as a point: id + vector + payload (the text itself).
-    client.upsert(
-        collection_name=COLLECTION,
-        wait=True,
-        points=[
-            PointStruct(id=i, vector=v.tolist(), payload={"text": SENTENCES[i]})
-            for i, v in enumerate(vecs)
-        ],
-    )
-
-    qv = embed(QUERY)
+    qv = ollama.embed(QUERY)
 
     # ── Qdrant search (indexed / ANN) ──
     t0 = time.perf_counter()
-    hits = client.query_points(
-        collection_name=COLLECTION, query=qv.tolist(), limit=TOP_K, with_payload=True
-    ).points
+    hits = store.search(qv, TOP_K)
     db_ms = (time.perf_counter() - t0) * 1000
     db_hits = [(h.score, h.payload["text"]) for h in hits]
 
@@ -172,4 +100,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    with tee_stdout(os.path.join(settings.result_dir, "day3.txt")):
+        main()

@@ -10,35 +10,17 @@ Goal: build the intuition that a vector DB later automates. You will:
      and pairs that MEAN the same but score low. That gap is why real
      retrieval misfires — the whole point of the day.
 
-Run it, read the output, then edit SENTENCES / QUERY and run again.
-Nothing here is a black box — open every function.
+Run it, read the output, then edit SENTENCES / QUERY and run again. The plumbing
+(embed, cosine, config) lives in the `locallearn` package so this file shows only
+the day's actual lesson — but nothing there is a black box; open it and read.
+Every run also tees its output to result/day2.txt so you can fill notes/ later.
 """
 import os
-import sys
-import requests
-import numpy as np
 
+from locallearn import Settings, OllamaClient, cosine, tee_stdout
 
-def load_dotenv(path=".env"):
-    """Tiny stdlib .env loader — no external dep. Real env vars win over the file."""
-    if not os.path.exists(path):
-        return
-    with open(path) as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, _, val = line.partition("=")
-            os.environ.setdefault(key.strip(), val.strip())
-
-
-# Load .env from the repo root regardless of where you invoke the script from.
-load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
-
-# Config-driven endpoint (good FDE habit). Set OLLAMA_URL in .env (or export it);
-# defaults to localhost — correct on the ASUS, override to the ASUS IP on the Mac.
-OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-EMBED_MODEL = "nomic-embed-text"
+settings = Settings.from_env()
+ollama = OllamaClient(settings.ollama_url, settings.embed_model)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # The corpus. Start with these, then ADD YOUR OWN adversarial pairs (see mission).
@@ -67,38 +49,13 @@ SENTENCES = [
 QUERY = "Suggest me some good restaurants in Mumbai."
 
 
-def embed(text: str) -> np.ndarray:
-    """One sentence -> one vector. This is the only 'AI' call in the file."""
-    resp = requests.post(
-        f"{OLLAMA_URL}/api/embeddings",
-        json={"model": EMBED_MODEL, "prompt": text},
-        timeout=60,
-    )
-    resp.raise_for_status()
-    return np.array(resp.json()["embedding"], dtype=np.float32)
-
-
-def cosine(a: np.ndarray, b: np.ndarray) -> float:
-    """
-    Cosine similarity = how aligned two vectors point, ignoring length.
-      1.0 = identical direction, 0 = unrelated, -1 = opposite.
-    This is literally what a vector DB computes for you at scale. No magic.
-    """
-    return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
-
-
 def main() -> None:
-    # Sanity: is Ollama reachable and is the model pulled?
-    try:
-        tags = requests.get(f"{OLLAMA_URL}/api/tags", timeout=10).json()
-    except Exception as e:
-        sys.exit(f"Can't reach Ollama at {OLLAMA_URL} — is it running? ({e})")
-    names = [m["name"] for m in tags.get("models", [])]
-    if not any(n.startswith(EMBED_MODEL) for n in names):
-        sys.exit(f"Model '{EMBED_MODEL}' not pulled. Run: ollama pull {EMBED_MODEL}")
+    # Sanity: is Ollama reachable and is the embedder pulled? (fails loud w/ fix)
+    ollama.require_model(settings.embed_model)
 
-    print(f"Embedding {len(SENTENCES)} sentences with {EMBED_MODEL} @ {OLLAMA_URL}\n")
-    vecs = [embed(s) for s in SENTENCES]
+    print(f"Embedding {len(SENTENCES)} sentences with {settings.embed_model} "
+          f"@ {settings.ollama_url}\n")
+    vecs = [ollama.embed(s) for s in SENTENCES]
     print(f"Vector dimensionality: {len(vecs[0])}  "
           f"(each sentence is now a point in {len(vecs[0])}-D space)\n")
 
@@ -117,7 +74,7 @@ def main() -> None:
     print("\n" + "=" * 70)
     print(f"SEARCH RESULTS for query: {QUERY!r}")
     print("=" * 70)
-    qv = embed(QUERY)
+    qv = ollama.embed(QUERY)
     ranked = sorted(
         ((cosine(qv, v), s) for v, s in zip(vecs, SENTENCES)), reverse=True
     )
@@ -128,4 +85,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    with tee_stdout(os.path.join(settings.result_dir, "day2.txt")):
+        main()

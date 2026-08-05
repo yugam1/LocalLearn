@@ -38,8 +38,8 @@ Code + Claude Code = **Mac only** (the plan). ASUS is headless infra.
 
 ## Status
 
-**Current day:** Day 4 done (full RAG run + notes filled, incl. Part C grounding test). Day 5 (break RAG 4 ways) scaffolded — script + notes template written, not yet run.
-**Last updated:** 2026-08-04
+**Current day:** Day 4 done (full RAG run + notes filled, incl. Part C grounding test). Day 5 (break RAG 4 ways) scaffolded — script + notes template written, not yet run. All day scripts refactored onto a shared `scripts/locallearn/` package + now self-log to `result/`.
+**Last updated:** 2026-08-05
 
 ### Week 1 checklist
 - [x] **Day 1** — Ollama up; talk to API; observe tokens/context; break context window; write `notes/day1.md`
@@ -53,6 +53,13 @@ Code + Claude Code = **Mac only** (the plan). ASUS is headless infra.
 ---
 
 ## Log (newest first)
+
+### 2026-08-05 — Refactor: shared `locallearn` package + self-logging (no new day)
+- **Why:** every day script had copy-pasted the same plumbing (`load_dotenv`, `embed`, `cosine`, `connect`, chunking, `generate`, display helpers). Pulled the common code out so each `dayN` file shows only its unique teaching content (corpus, queries, breaks, diagnoses), and applied OOP/SOLID.
+- **New package `scripts/locallearn/`** (feature-wise modules): `config` (`Settings` dataclass + `load_dotenv`), `ollama` (`OllamaClient`: `.embed`/`.chat`/`.require_model`), `similarity` (`cosine`), `chunking` (`Document`/`Chunk`/`Chunker`/`load_documents`), `vectorstore` (`VectorStore` — Qdrant wrapper with the **embedder injected**, so Day 3 drives it vector-level via `load()`/`search()` and Day 4/5 text-level via `rebuild()`/`retrieve()`), `generation` (`format_context`+`generate`), `prompts` (`GROUNDED_SYSTEM`/`NAIVE_SYSTEM`), `display` (`banner`/`show_retrieval`/`show_chunks`/`print_answer`), `runlog` (`Tee`+`tee_stdout`). `__init__.py` re-exports everything as `from locallearn import ...` (works because a script's own dir is on `sys.path`).
+- **Self-logging for ALL days** (replaces shell `>` redirects): `day2`→`result/day2.txt`, `day3`→`result/day3.txt`, `day4`→`result/day4.txt`, `day5`→`result/day5_<mode>.txt`. `tee_stdout` writes the file AND still prints live; nests, so `day5 MODE=all` produces 5 files = 4 per-mode + a combined `day5_all.txt`.
+- **Behavior preserved** (verified offline: byte-compile + import all + `Chunker` matches old `chunk_text`, payload schema unchanged `source`/`chunk`/`text`, tee nesting → 5 files). Not run against the ASUS yet. One cosmetic change: Day 4 retrieval now uses the shared `show_retrieval` (140-char previews) instead of its old boxed 150-char block.
+- **Next:** unchanged — user still needs to run `day5_break_rag.py` per MODE, then fill `notes/day5.md`.
 
 ### 2026-08-04 — Day 4 done, Day 5 scaffolded
 - **Day 4 run** (`scripts/day4_rag.py`, client→server): full pipeline ran — 3 Beacon docs → 10 chunks (120-word/25-overlap) → `nomic-embed-text` 768-D → Qdrant `day4_beacon_docs` (Cosine) → top-4 retrieve → grounded generate w/ `[n]` citations on `llama3.1:8b`. Happy-path query ("why is my Tag offline?") retrieved chunk0 at 0.743 with a clean gap over the pack (next 0.643), all top-4 inside `troubleshooting.md`. Answer was faithful (nothing invented) but **citations were sloppy** — attributed a chunk2 fact to `[1]`/`[4]` — a distinct "grounded ≠ correctly attributed" failure mode. Part C **out-of-corpus grounding test** (`result/day4New.txt`, "Does Beacon integrate with Salesforce?") now run: scores low+flat (0.538→0.513) scattered across all 3 docs, and the guardrail **held** — model replied verbatim "I don't know based on the provided documents." Findings in `notes/day4.md`.
