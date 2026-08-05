@@ -38,21 +38,26 @@ Code + Claude Code = **Mac only** (the plan). ASUS is headless infra.
 
 ## Status
 
-**Current day:** Day 3 done. Day 4 (full RAG) scaffolded — script + docs + notes template written, not yet run.
-**Last updated:** 2026-08-02
+**Current day:** Day 4 done (full RAG run + notes filled, incl. Part C grounding test). Day 5 (break RAG 4 ways) scaffolded — script + notes template written, not yet run.
+**Last updated:** 2026-08-04
 
 ### Week 1 checklist
 - [x] **Day 1** — Ollama up; talk to API; observe tokens/context; break context window; write `notes/day1.md`
 - [x] **Day 2** — embeddings by hand (`nomic-embed-text`), cosine similarity script; found false pos/neg + polarity blind spot
 - [x] **Day 3** — Qdrant in Docker; real similarity search; matched numpy brute force exactly (0.00000 gap), numpy ~74× faster at N=13
-- [~] **Day 4** — full RAG pipeline (ingest → chunk → embed → store → retrieve → answer w/ citations) — **scaffolded, not yet run**
-- [ ] **Day 5** — break RAG 4 ways: chunking / retrieval / hallucination / stale index
+- [x] **Day 4** — full RAG pipeline (ingest → chunk → embed → store → retrieve → answer w/ citations); happy-path + out-of-corpus grounding test both run
+- [~] **Day 5** — break RAG 4 ways: chunking / retrieval / hallucination / stale index — **scaffolded, not yet run**
 - [ ] **Day 6** — improve retrieval (hybrid BM25+vector, reranker); measure if quality actually improved
 - [ ] **Day 7** — eval harness: 20-Q gold set, exact-match + LLM-as-judge, produce a %
 
 ---
 
 ## Log (newest first)
+
+### 2026-08-04 — Day 4 done, Day 5 scaffolded
+- **Day 4 run** (`scripts/day4_rag.py`, client→server): full pipeline ran — 3 Beacon docs → 10 chunks (120-word/25-overlap) → `nomic-embed-text` 768-D → Qdrant `day4_beacon_docs` (Cosine) → top-4 retrieve → grounded generate w/ `[n]` citations on `llama3.1:8b`. Happy-path query ("why is my Tag offline?") retrieved chunk0 at 0.743 with a clean gap over the pack (next 0.643), all top-4 inside `troubleshooting.md`. Answer was faithful (nothing invented) but **citations were sloppy** — attributed a chunk2 fact to `[1]`/`[4]` — a distinct "grounded ≠ correctly attributed" failure mode. Part C **out-of-corpus grounding test** (`result/day4New.txt`, "Does Beacon integrate with Salesforce?") now run: scores low+flat (0.538→0.513) scattered across all 3 docs, and the guardrail **held** — model replied verbatim "I don't know based on the provided documents." Findings in `notes/day4.md`.
+- **Day 5 scaffold** (not yet run): built `scripts/day5_break_rag.py` — induces all four RAG failure modes, each as a HEALTHY-vs-BROKEN A/B in one run with a DIAGNOSIS line naming the guilty stage. (1) **chunking**: 120-word → 10-word/0-overlap shreds the pricing table from its header; (2) **retrieval**: k=4 → k=1 on a two-chunk question (offline def + >2h power-cycle fix) returns half; (3) **hallucination**: identical retrieval, grounding prompt on vs. off, on the Salesforce out-of-corpus query; (4) **stale index**: simulated in-memory `$4→$6` edit to pricing WITHOUT re-embedding → old answer until re-index (does NOT touch real `docs/`). `MODE` const (or env) picks one, or `all`. Separate collection `day5_break_rag`. `notes/day5.md` template written with per-break blanks + a symptom→stage→fix taxonomy table (the "is it retrieval or generation?" interview answer). Also added a project **`CLAUDE.md`** (read-order + conventions for building new days).
+- **Next:** user runs `day5_break_rag.py` one MODE at a time → `result/day5_<mode>.txt`, then we fill `notes/day5.md` from real output. **[fill the four observed outcomes + the one-line taxonomy through-line after running.]**
 
 ### 2026-08-02 — Day 3 done, Day 4 scaffolded
 - **Day 3 run** (`scripts/day3_qdrant.py`, ASUS): Qdrant matched the numpy brute-force cosine loop exactly — same top-5 order, max score gap `0.00000`. Latency at N=13: Qdrant `11.88 ms` vs numpy `0.16 ms` (~74× slower — the index is pure overhead at tiny N; crossover is at large N). Findings written to `notes/day3.md`. Recorded run (`result/day3.txt`, script default `QUERY = "How can I recover access to my account?"`, latency 11.21 ms vs 0.20 ms) **reproduced the exact Day-2 danger in a real vector DB**: "How do I permanently delete my account?" ranked #1 (0.730) for a *recovery* query, above "reset my password" (0.714) and "forgot my login credentials" (0.655). Opposite-intent, most-destructive doc wins on topic/keyword overlap — the bug got persisted into the DB, not fixed by it.

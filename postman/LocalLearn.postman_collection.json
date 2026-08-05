@@ -1,0 +1,228 @@
+{
+  "info": {
+    "name": "LocalLearn — ASUS APIs (from Mac)",
+    "_postman_id": "b7f3a1c2-4d5e-4a6b-9c8d-0e1f2a3b4c5d",
+    "description": "APIs the Mac (dev client) calls on the ASUS (server) for the LocalLearn track.\n\nTwo services run on the ASUS:\n- **Ollama**  → embeddings + generation  (port 11434)\n- **Qdrant**  → vector DB               (port 6333, REST)\n\n## Setup\nThe collection variables default to the ASUS LAN IP (192.168.1.19). If your ASUS IP changes, edit the `asus_ip` variable once (Collection → Variables) and every request follows.\n\nTo hit services locally *on the ASUS itself* instead, set `asus_ip` = `localhost`.\n\nModels and collection name mirror the Day 2–4 scripts:\n- `embed_model` = nomic-embed-text (768-D)\n- `gen_model`   = llama3.1:8b\n- `collection`  = day4_beacon_docs\n\n## Suggested run order (Qdrant)\nHealth → Create collection → Upsert points → Query points → Count → Delete.\nUpsert/Query bodies use a tiny 4-D dummy vector so you can exercise the API by hand without generating a real 768-D embedding first. For a real end-to-end test, grab an embedding from **Ollama → Generate embedding**, then paste it into the upsert/query body (and set the collection's vector size to 768).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "asus_ip", "value": "192.168.1.19", "type": "string" },
+    { "key": "ollama_url", "value": "http://{{asus_ip}}:11434", "type": "string" },
+    { "key": "qdrant_url", "value": "http://{{asus_ip}}:6333", "type": "string" },
+    { "key": "embed_model", "value": "nomic-embed-text", "type": "string" },
+    { "key": "gen_model", "value": "llama3.1:8b", "type": "string" },
+    { "key": "collection", "value": "day4_beacon_docs", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "Ollama (:11434)",
+      "description": "Local LLM server. Used by day2/day3/day4 scripts for embeddings (`/api/embeddings`) and grounded generation (`/api/chat`).",
+      "item": [
+        {
+          "name": "Health / root",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{ollama_url}}/", "host": ["{{ollama_url}}"], "path": [""] },
+            "description": "Bare GET on the root returns 'Ollama is running'. Fastest smoke test that the ASUS service is reachable from the Mac."
+          }
+        },
+        {
+          "name": "Version",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{ollama_url}}/api/version", "host": ["{{ollama_url}}"], "path": ["api", "version"] },
+            "description": "Returns the running Ollama version."
+          }
+        },
+        {
+          "name": "List models (tags)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{ollama_url}}/api/tags", "host": ["{{ollama_url}}"], "path": ["api", "tags"] },
+            "description": "Lists locally-pulled models on the ASUS. Confirm nomic-embed-text and llama3.1:8b are present here before running the scripts."
+          }
+        },
+        {
+          "name": "Show model info",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"{{gen_model}}\"\n}"
+            },
+            "url": { "raw": "{{ollama_url}}/api/show", "host": ["{{ollama_url}}"], "path": ["api", "show"] },
+            "description": "Details for one model: parameters, template, context length, quantization."
+          }
+        },
+        {
+          "name": "Pull model",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"{{embed_model}}\",\n  \"stream\": false\n}"
+            },
+            "url": { "raw": "{{ollama_url}}/api/pull", "host": ["{{ollama_url}}"], "path": ["api", "pull"] },
+            "description": "Download a model onto the ASUS. Run once to provision nomic-embed-text / llama3.1:8b. stream=false waits for completion and returns a single final status."
+          }
+        },
+        {
+          "name": "Generate embedding",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"{{embed_model}}\",\n  \"prompt\": \"How can I recover access to my account?\"\n}"
+            },
+            "url": { "raw": "{{ollama_url}}/api/embeddings", "host": ["{{ollama_url}}"], "path": ["api", "embeddings"] },
+            "description": "THE Day 2–4 embed call. One string → one 768-D vector under `embedding`. Copy that array into the Qdrant upsert/query bodies for a real end-to-end test."
+          }
+        },
+        {
+          "name": "Chat (grounded generation)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"{{gen_model}}\",\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You are a support assistant for a product called Beacon. Answer using ONLY the numbered context sources provided. Cite sources inline like [1]. If the answer is not in the context, reply exactly: 'I don't know based on the provided documents.'\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"Context:\\n[1] (source: troubleshooting.md#chunk0)\\nA Beacon Tag shows offline when it loses power or Wi-Fi. Re-seat the battery and confirm it rejoins the network.\\n\\nQuestion: Why is my Beacon Tag showing as offline and how do I fix it?\"\n    }\n  ],\n  \"stream\": false,\n  \"options\": { \"temperature\": 0 }\n}"
+            },
+            "url": { "raw": "{{ollama_url}}/api/chat", "host": ["{{ollama_url}}"], "path": ["api", "chat"] },
+            "description": "The Day 4 generation call. Grounded RAG prompt with numbered context. stream=false returns the full answer under `message.content`. temperature 0 keeps reruns comparable."
+          }
+        },
+        {
+          "name": "Generate (single-prompt completion)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"{{gen_model}}\",\n  \"prompt\": \"In one sentence, what is a vector database?\",\n  \"stream\": false,\n  \"options\": { \"temperature\": 0 }\n}"
+            },
+            "url": { "raw": "{{ollama_url}}/api/generate", "host": ["{{ollama_url}}"], "path": ["api", "generate"] },
+            "description": "Simpler prompt→completion endpoint (no chat roles). Handy for quick model sanity checks."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Qdrant (:6333)",
+      "description": "Vector DB REST API. The qdrant-client calls in day3/day4 map 1:1 to these HTTP endpoints.\n\nNote: the sample upsert/query bodies use a 4-D dummy vector so you can drive the API by hand. For a REAL test, use a 768-D embedding from Ollama and set the collection's vector size to 768.",
+      "item": [
+        {
+          "name": "Health — readyz",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{qdrant_url}}/readyz", "host": ["{{qdrant_url}}"], "path": ["readyz"] },
+            "description": "Readiness probe. 200 = Qdrant container is up and serving. Fastest reachability check from the Mac."
+          }
+        },
+        {
+          "name": "List collections",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{qdrant_url}}/collections", "host": ["{{qdrant_url}}"], "path": ["collections"] },
+            "description": "What `client.get_collections()` calls under the hood — used by the scripts' connect() as a real round-trip health check."
+          }
+        },
+        {
+          "name": "Create collection",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"vectors\": {\n    \"size\": 4,\n    \"distance\": \"Cosine\"\n  }\n}"
+            },
+            "url": { "raw": "{{qdrant_url}}/collections/{{collection}}", "host": ["{{qdrant_url}}"], "path": ["collections", "{{collection}}"] },
+            "description": "PUT /collections/{name}. size=4 matches the dummy vectors below; for real nomic-embed-text data set size=768. Distance Cosine = the Day 2/3 metric."
+          }
+        },
+        {
+          "name": "Get collection info",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{qdrant_url}}/collections/{{collection}}", "host": ["{{qdrant_url}}"], "path": ["collections", "{{collection}}"] },
+            "description": "Status, vector config, and point count for one collection. 404 here is how `collection_exists` decides existence."
+          }
+        },
+        {
+          "name": "Upsert points",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"points\": [\n    {\n      \"id\": 0,\n      \"vector\": [0.1, 0.2, 0.3, 0.4],\n      \"payload\": { \"source\": \"troubleshooting.md\", \"chunk\": 0, \"text\": \"A Beacon Tag shows offline when it loses power or Wi-Fi.\" }\n    },\n    {\n      \"id\": 1,\n      \"vector\": [0.9, 0.8, 0.7, 0.6],\n      \"payload\": { \"source\": \"overview.md\", \"chunk\": 0, \"text\": \"Beacon is a fictional product used for this RAG demo.\" }\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{qdrant_url}}/collections/{{collection}}/points?wait=true",
+              "host": ["{{qdrant_url}}"],
+              "path": ["collections", "{{collection}}", "points"],
+              "query": [{ "key": "wait", "value": "true" }]
+            },
+            "description": "PUT /collections/{name}/points. wait=true blocks until the write is applied (what the scripts use). Replace vectors with real 768-D embeddings for an actual test."
+          }
+        },
+        {
+          "name": "Query points (search)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": [0.1, 0.2, 0.3, 0.4],\n  \"limit\": 4,\n  \"with_payload\": true\n}"
+            },
+            "url": { "raw": "{{qdrant_url}}/collections/{{collection}}/points/query", "host": ["{{qdrant_url}}"], "path": ["collections", "{{collection}}", "points", "query"] },
+            "description": "POST /collections/{name}/points/query — the Day 3/4 retrieval call. `query` is the query embedding; returns top-k nearest points with score + payload. Use a real 768-D query vector from Ollama for meaningful results."
+          }
+        },
+        {
+          "name": "Count points",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"exact\": true\n}"
+            },
+            "url": { "raw": "{{qdrant_url}}/collections/{{collection}}/points/count", "host": ["{{qdrant_url}}"], "path": ["collections", "{{collection}}", "points", "count"] },
+            "description": "How many points are stored. Quick check that an ingest actually landed (Day 5 debugging: 'did anything get stored at all?')."
+          }
+        },
+        {
+          "name": "Scroll points (browse)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"limit\": 10,\n  \"with_payload\": true,\n  \"with_vector\": false\n}"
+            },
+            "url": { "raw": "{{qdrant_url}}/collections/{{collection}}/points/scroll", "host": ["{{qdrant_url}}"], "path": ["collections", "{{collection}}", "points", "scroll"] },
+            "description": "Page through stored points without a vector query. Inspect what payloads actually got indexed — the 'is it retrieval or storage?' debugging seam."
+          }
+        },
+        {
+          "name": "Delete collection",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": { "raw": "{{qdrant_url}}/collections/{{collection}}", "host": ["{{qdrant_url}}"], "path": ["collections", "{{collection}}"] },
+            "description": "DELETE /collections/{name}. The scripts drop + recreate each run so re-ingests are clean."
+          }
+        }
+      ]
+    }
+  ]
+}
