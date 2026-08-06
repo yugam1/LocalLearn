@@ -28,20 +28,16 @@ Every run tees its output to result/day4.txt.
 import os
 import textwrap
 
+# Import the feature MODULES as namespaces (not their loose names) so every call
+# site names its source file: config.Settings lives in config.py,
+# vectorstore.VectorStore in vectorstore.py, generation.generate in generation.py.
+# The module IS the file — that's the at-a-glance link between call and definition.
 from locallearn import (
-    Settings,
-    OllamaClient,
-    VectorStore,
-    Chunker,
-    load_documents,
-    generate,
-    GROUNDED_SYSTEM,
-    show_retrieval,
-    tee_stdout,
+    config, ollama, vectorstore, chunking, generation, prompts, display, runlog,
 )
 
-settings = Settings.from_env()
-ollama = OllamaClient(settings.ollama_url, settings.embed_model, settings.gen_model)
+settings = config.Settings.from_env()
+client = ollama.OllamaClient(settings.ollama_url, settings.embed_model, settings.gen_model)
 COLLECTION = "day4_beacon_docs"
 
 # Chunking knobs. Word-based sliding window with overlap — deliberately simple and
@@ -61,11 +57,11 @@ TOP_K = 4
 
 
 def main() -> None:
-    store = VectorStore.connect(settings.qdrant_url, COLLECTION, embedder=ollama)
+    store = vectorstore.VectorStore.connect(settings.qdrant_url, COLLECTION, embedder=client)
 
     # 1) INGEST + CHUNK
-    docs = load_documents(settings.docs_dir)
-    chunks = Chunker(CHUNK_WORDS, CHUNK_OVERLAP).chunk(docs)
+    docs = chunking.load_documents(settings.docs_dir)
+    chunks = chunking.Chunker(CHUNK_WORDS, CHUNK_OVERLAP).chunk(docs)
     sources = sorted({c.source for c in chunks})
     print(f"Ingested {len(sources)} docs -> {len(chunks)} chunks "
           f"({CHUNK_WORDS}-word windows, {CHUNK_OVERLAP} overlap): {', '.join(sources)}")
@@ -79,12 +75,12 @@ def main() -> None:
     # 4) RETRIEVE — and SHOW the retrieval before the answer. The debugging seam.
     hits = store.retrieve(QUERY, TOP_K)
     print("\n" + "=" * 76)
-    show_retrieval(QUERY, hits)
+    display.show_retrieval(QUERY, hits)
 
     # 5) GENERATE — grounded answer with citations
     print("\n" + "-" * 76)
     print("ANSWER (grounded, cite-or-refuse):\n")
-    print(textwrap.fill(generate(ollama, QUERY, hits, GROUNDED_SYSTEM), width=76))
+    print(textwrap.fill(generation.generate(client, QUERY, hits, prompts.GROUNDED_SYSTEM), width=76))
 
     print("\n" + "=" * 76)
     print(
@@ -97,5 +93,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    with tee_stdout(os.path.join(settings.result_dir, "day4.txt")):
+    with runlog.tee_stdout(os.path.join(settings.result_dir, "day4.txt")):
         main()

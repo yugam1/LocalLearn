@@ -18,10 +18,12 @@ level instead. Every run tees to result/day3.txt.
 import os
 import time
 
-from locallearn import Settings, OllamaClient, VectorStore, cosine, tee_stdout
+# Import feature MODULES (not loose names) so every call names its source file:
+# config.Settings lives in config.py, vectorstore.VectorStore in vectorstore.py, etc.
+from locallearn import config, ollama, vectorstore, similarity, runlog
 
-settings = Settings.from_env()
-ollama = OllamaClient(settings.ollama_url, settings.embed_model)
+settings = config.Settings.from_env()
+client = ollama.OllamaClient(settings.ollama_url, settings.embed_model)
 COLLECTION = "day3_sentences"
 
 # Same corpus as Day 2 so you can compare behaviour directly. The traps carry
@@ -48,15 +50,15 @@ TOP_K = 5
 
 
 def main() -> None:
-    store = VectorStore.connect(settings.qdrant_url, COLLECTION)  # no embedder: vector-level
+    store = vectorstore.VectorStore.connect(settings.qdrant_url, COLLECTION)  # no embedder: vector-level
 
     print(f"Embedding {len(SENTENCES)} sentences with {settings.embed_model} "
           f"@ {settings.ollama_url}")
-    vecs = [ollama.embed(s) for s in SENTENCES]
+    vecs = [client.embed(s) for s in SENTENCES]
     dim = store.load(vecs, [{"text": s} for s in SENTENCES])
     print(f"Vector dim: {dim}. Loaded into Qdrant @ {settings.qdrant_url}\n")
 
-    qv = ollama.embed(QUERY)
+    qv = client.embed(QUERY)
 
     # ── Qdrant search (indexed / ANN) ──
     t0 = time.perf_counter()
@@ -67,7 +69,7 @@ def main() -> None:
     # ── Brute-force numpy (yesterday's exact method) = ground truth ──
     t0 = time.perf_counter()
     bf = sorted(
-        ((cosine(qv, v), s) for v, s in zip(vecs, SENTENCES)), reverse=True
+        ((similarity.cosine(qv, v), s) for v, s in zip(vecs, SENTENCES)), reverse=True
     )[:TOP_K]
     bf_ms = (time.perf_counter() - t0) * 1000
 
@@ -100,5 +102,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    with tee_stdout(os.path.join(settings.result_dir, "day3.txt")):
+    with runlog.tee_stdout(os.path.join(settings.result_dir, "day3.txt")):
         main()

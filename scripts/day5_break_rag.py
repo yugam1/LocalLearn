@@ -37,25 +37,16 @@ printing live. MODE=all writes each mode's file PLUS a combined result/day5_all.
 """
 import os
 
+# Import the feature MODULES as namespaces (not their loose names) so every call
+# site names its source file: config.Settings lives in config.py, chunking.Chunker
+# in chunking.py, display.banner in display.py, runlog.tee_stdout in runlog.py.
+# The module IS the file — that's the at-a-glance link between call and definition.
 from locallearn import (
-    Settings,
-    OllamaClient,
-    VectorStore,
-    Chunker,
-    Document,
-    load_documents,
-    generate,
-    GROUNDED_SYSTEM,
-    NAIVE_SYSTEM,
-    banner,
-    show_retrieval,
-    show_chunks,
-    print_answer,
-    tee_stdout,
+    config, ollama, vectorstore, chunking, generation, prompts, display, runlog,
 )
 
-settings = Settings.from_env()
-ollama = OllamaClient(settings.ollama_url, settings.embed_model, settings.gen_model)
+settings = config.Settings.from_env()
+client = ollama.OllamaClient(settings.ollama_url, settings.embed_model, settings.gen_model)
 COLLECTION = "day5_break_rag"
 
 # Healthy chunking knobs — the Day-4 baseline that WORKS. Each break below dials
@@ -70,14 +61,14 @@ TOP_K = 4
 MODE = os.environ.get("MODE", "chunking")
 
 
-def answer(query: str, hits: list, system: str = GROUNDED_SYSTEM) -> None:
-    print_answer(generate(ollama, query, hits, system))
+def answer(query: str, hits: list, system: str = prompts.GROUNDED_SYSTEM) -> None:
+    display.print_answer(generation.generate(client, query, hits, system))
 
 
 # ── BREAK #1: CHUNKING — sever the pricing table from its header row. ──────────
-def run_chunking(store: VectorStore) -> None:
-    banner("BREAK #1 — CHUNKING  (sever the table; the number outlives its label)")
-    docs = load_documents(settings.docs_dir)
+def run_chunking(store: vectorstore.VectorStore) -> None:
+    display.banner("BREAK #1 — CHUNKING  (sever the table; the number outlives its label)")
+    docs = chunking.load_documents(settings.docs_dir)
     # The pricing table's meaning lives in the HEADER row ("| Price / Tag / mo |
     # Max Tags | ...") that labels every column. A cell like "$9" or "250" is only
     # meaningful next to that header. Chunk small enough and the header ends up in
@@ -87,19 +78,19 @@ def run_chunking(store: VectorStore) -> None:
     query = "How much does the Pro plan cost per Tag per month?"
 
     print("\n--- HEALTHY (120-word windows: the whole table lands in one chunk) ---")
-    healthy = Chunker(CHUNK_WORDS, CHUNK_OVERLAP).chunk(docs)
-    show_chunks([c for c in healthy if c.source == "pricing.md"])
+    healthy = chunking.Chunker(CHUNK_WORDS, CHUNK_OVERLAP).chunk(docs)
+    display.show_chunks([c for c in healthy if c.source == "pricing.md"])
     store.rebuild(healthy)
     hits = store.retrieve(query, TOP_K)
-    show_retrieval(query, hits)
+    display.show_retrieval(query, hits)
     answer(query, hits)
 
     print("\n--- BROKEN (10-word windows, 0 overlap: the table is shredded) ---")
-    broken = Chunker(10, 0).chunk(docs)
-    show_chunks([c for c in broken if c.source == "pricing.md"])
+    broken = chunking.Chunker(10, 0).chunk(docs)
+    display.show_chunks([c for c in broken if c.source == "pricing.md"])
     store.rebuild(broken)
     hits = store.retrieve(query, TOP_K)
-    show_retrieval(query, hits)
+    display.show_retrieval(query, hits)
     answer(query, hits)
 
     print("\nDIAGNOSIS: same query, same model, same grounding prompt — only the")
@@ -110,9 +101,9 @@ def run_chunking(store: VectorStore) -> None:
 
 
 # ── BREAK #2: RETRIEVAL — the answer needs two chunks; k=1 returns one. ────────
-def run_retrieval(store: VectorStore) -> None:
-    banner("BREAK #2 — RETRIEVAL  (answer spans two chunks; k=1 brings back half)")
-    docs = load_documents(settings.docs_dir)
+def run_retrieval(store: vectorstore.VectorStore) -> None:
+    display.banner("BREAK #2 — RETRIEVAL  (answer spans two chunks; k=1 brings back half)")
+    docs = chunking.load_documents(settings.docs_dir)
     # This question has TWO parts living in two different chunks of
     # troubleshooting.md: the DEFINITION of 'offline' (no ping >15 min, the causes)
     # sits near the top (chunk0); the FIX for a >2h silence (power-cycle via the
@@ -121,16 +112,16 @@ def run_retrieval(store: VectorStore) -> None:
     # needed. This is why "how big is k?" is a real FDE question.
     query = ("What does it mean when a Beacon Tag is offline, and what should I "
              "do if it's still silent after more than 2 hours?")
-    store.rebuild(Chunker(CHUNK_WORDS, CHUNK_OVERLAP).chunk(docs))
+    store.rebuild(chunking.Chunker(CHUNK_WORDS, CHUNK_OVERLAP).chunk(docs))
 
     print("\n--- HEALTHY (k=4: both the definition chunk and the fix chunk return) ---")
     hits = store.retrieve(query, 4)
-    show_retrieval(query, hits)
+    display.show_retrieval(query, hits)
     answer(query, hits)
 
     print("\n--- BROKEN (k=1: only the single nearest chunk returns) ---")
     hits = store.retrieve(query, 1)
-    show_retrieval(query, hits)
+    display.show_retrieval(query, hits)
     answer(query, hits)
 
     print("\nDIAGNOSIS: same query, same chunks in the DB, same model — only k")
@@ -141,9 +132,9 @@ def run_retrieval(store: VectorStore) -> None:
 
 
 # ── BREAK #3: HALLUCINATION — same retrieval, guardrail on vs. off. ───────────
-def run_hallucination(store: VectorStore) -> None:
-    banner("BREAK #3 — HALLUCINATION  (out-of-corpus; the guardrail is the only wall)")
-    docs = load_documents(settings.docs_dir)
+def run_hallucination(store: vectorstore.VectorStore) -> None:
+    display.banner("BREAK #3 — HALLUCINATION  (out-of-corpus; the guardrail is the only wall)")
+    docs = chunking.load_documents(settings.docs_dir)
     # Nothing in the Beacon docs mentions Salesforce. But cosine ALWAYS returns
     # top-k — it hands over the 4 least-bad chunks no matter how irrelevant (you
     # saw this in Day 4 Part C: scores flat ~0.51, scattered across docs). The
@@ -151,15 +142,15 @@ def run_hallucination(store: VectorStore) -> None:
     # system prompt. That isolates the grounding instruction as the single thing
     # deciding between an honest refusal and a confident fabrication.
     query = "Does Beacon integrate with Salesforce?"
-    store.rebuild(Chunker(CHUNK_WORDS, CHUNK_OVERLAP).chunk(docs))
+    store.rebuild(chunking.Chunker(CHUNK_WORDS, CHUNK_OVERLAP).chunk(docs))
     hits = store.retrieve(query, TOP_K)
-    show_retrieval(query, hits)
+    display.show_retrieval(query, hits)
 
     print("\n--- WITH GUARDRAIL (grounded: 'answer ONLY from context, else I don't know') ---")
-    answer(query, hits, system=GROUNDED_SYSTEM)
+    answer(query, hits, system=prompts.GROUNDED_SYSTEM)
 
     print("\n--- WITHOUT GUARDRAIL (naive: 'use the context to help answer') ---")
-    answer(query, hits, system=NAIVE_SYSTEM)
+    answer(query, hits, system=prompts.NAIVE_SYSTEM)
 
     print("\nDIAGNOSIS: identical retrieved chunks, identical model — only the")
     print("PROMPT changed. If the naive run invents a Salesforce integration while")
@@ -169,16 +160,16 @@ def run_hallucination(store: VectorStore) -> None:
 
 
 # ── BREAK #4: STALE INDEX — edit the doc, skip re-embedding, get the old answer. ─
-def run_stale(store: VectorStore) -> None:
-    banner("BREAK #4 — STALE INDEX  (the vector store is a photo of the old truth)")
-    docs = load_documents(settings.docs_dir)
+def run_stale(store: vectorstore.VectorStore) -> None:
+    display.banner("BREAK #4 — STALE INDEX  (the vector store is a photo of the old truth)")
+    docs = chunking.load_documents(settings.docs_dir)
     query = "How much does the Starter plan cost per active Tag per month?"
 
     # v1: index the docs exactly as they are on disk today. Starter is $4.
     print("\n--- v1: index the docs as-is, then query ---")
-    store.rebuild(Chunker(CHUNK_WORDS, CHUNK_OVERLAP).chunk(docs))
+    store.rebuild(chunking.Chunker(CHUNK_WORDS, CHUNK_OVERLAP).chunk(docs))
     hits = store.retrieve(query, TOP_K)
-    show_retrieval(query, hits)
+    display.show_retrieval(query, hits)
     answer(query, hits)
 
     # SIMULATED EDIT: pretend an FDE updated pricing.md — Starter goes $4 -> $6 —
@@ -187,20 +178,20 @@ def run_stale(store: VectorStore) -> None:
     # payloads in Qdrant still describe the $4 world.
     print("\n--- EDIT pricing.md ($4 -> $6) but DO NOT re-embed, then re-query ---")
     edited_docs = [
-        Document(d.source, d.text.replace("| Starter    | $4", "| Starter    | $6"))
+        chunking.Document(d.source, d.text.replace("| Starter    | $4", "| Starter    | $6"))
         for d in docs
     ]
     changed = any(e.text != o.text for e, o in zip(edited_docs, docs))
     print(f"  (edit applied to source text: {changed}; index NOT rebuilt)")
     hits = store.retrieve(query, TOP_K)
-    show_retrieval(query, hits)
+    display.show_retrieval(query, hits)
     answer(query, hits)  # expect the STALE $4 — the index never saw the edit
 
     # Now do the thing the ops job forgot: re-embed the edited docs.
     print("\n--- RE-EMBED the edited docs (re-run ingest), then re-query ---")
-    store.rebuild(Chunker(CHUNK_WORDS, CHUNK_OVERLAP).chunk(edited_docs))
+    store.rebuild(chunking.Chunker(CHUNK_WORDS, CHUNK_OVERLAP).chunk(edited_docs))
     hits = store.retrieve(query, TOP_K)
-    show_retrieval(query, hits)
+    display.show_retrieval(query, hits)
     answer(query, hits)  # now the fresh $6
 
     print("\nDIAGNOSIS: the docs changed but the INDEX didn't. Retrieval returned a")
@@ -236,12 +227,12 @@ def footer() -> None:
 
 
 def main() -> None:
-    store = VectorStore.connect(settings.qdrant_url, COLLECTION, embedder=ollama)
+    store = vectorstore.VectorStore.connect(settings.qdrant_url, COLLECTION, embedder=client)
 
     if MODE in MODES:
         # One mode -> one log file (result/day5_<mode>.txt).
         written = [log_path(MODE)]
-        with tee_stdout(*written):
+        with runlog.tee_stdout(*written):
             header()
             MODES[MODE](store)
             footer()
@@ -250,10 +241,10 @@ def main() -> None:
         # Run the whole gauntlet. The outer tee captures a combined log; each mode
         # nests an inner tee for its OWN file. Result: 5 files (one per mode +
         # day5_all.txt). header/footer land only in the combined log.
-        with tee_stdout(log_path("all")):
+        with runlog.tee_stdout(log_path("all")):
             header()
             for name, fn in MODES.items():
-                with tee_stdout(log_path(name)):  # nests: also -> per-mode file
+                with runlog.tee_stdout(log_path(name)):  # nests: also -> per-mode file
                     fn(store)
             footer()
         written = [log_path(m) for m in MODES] + [log_path("all")]

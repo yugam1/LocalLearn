@@ -17,10 +17,12 @@ Every run also tees its output to result/day2.txt so you can fill notes/ later.
 """
 import os
 
-from locallearn import Settings, OllamaClient, cosine, tee_stdout
+# Import feature MODULES (not loose names) so every call names its source file:
+# config.Settings lives in config.py, similarity.cosine in similarity.py, etc.
+from locallearn import config, ollama, similarity, runlog
 
-settings = Settings.from_env()
-ollama = OllamaClient(settings.ollama_url, settings.embed_model)
+settings = config.Settings.from_env()
+client = ollama.OllamaClient(settings.ollama_url, settings.embed_model)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # The corpus. Start with these, then ADD YOUR OWN adversarial pairs (see mission).
@@ -51,11 +53,11 @@ QUERY = "Suggest me some good restaurants in Mumbai."
 
 def main() -> None:
     # Sanity: is Ollama reachable and is the embedder pulled? (fails loud w/ fix)
-    ollama.require_model(settings.embed_model)
+    client.require_model(settings.embed_model)
 
     print(f"Embedding {len(SENTENCES)} sentences with {settings.embed_model} "
           f"@ {settings.ollama_url}\n")
-    vecs = [ollama.embed(s) for s in SENTENCES]
+    vecs = [client.embed(s) for s in SENTENCES]
     print(f"Vector dimensionality: {len(vecs[0])}  "
           f"(each sentence is now a point in {len(vecs[0])}-D space)\n")
 
@@ -66,7 +68,7 @@ def main() -> None:
     pairs = []
     for i in range(len(SENTENCES)):
         for j in range(i + 1, len(SENTENCES)):
-            pairs.append((cosine(vecs[i], vecs[j]), i, j))
+            pairs.append((similarity.cosine(vecs[i], vecs[j]), i, j))
     for score, i, j in sorted(pairs, reverse=True):
         print(f"{score:.3f}  | {SENTENCES[i][:38]:<40} <-> {SENTENCES[j][:38]}")
 
@@ -74,9 +76,9 @@ def main() -> None:
     print("\n" + "=" * 70)
     print(f"SEARCH RESULTS for query: {QUERY!r}")
     print("=" * 70)
-    qv = ollama.embed(QUERY)
+    qv = client.embed(QUERY)
     ranked = sorted(
-        ((cosine(qv, v), s) for v, s in zip(vecs, SENTENCES)), reverse=True
+        ((similarity.cosine(qv, v), s) for v, s in zip(vecs, SENTENCES)), reverse=True
     )
     for rank, (score, s) in enumerate(ranked, 1):
         print(f"{rank:>2}. {score:.3f}  {s}")
@@ -85,5 +87,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    with tee_stdout(os.path.join(settings.result_dir, "day2.txt")):
+    with runlog.tee_stdout(os.path.join(settings.result_dir, "day2.txt")):
         main()
