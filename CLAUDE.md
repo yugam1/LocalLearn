@@ -28,7 +28,12 @@ explain the tradeoff.** Systems, tradeoffs, and failure modes over theory.
   shadow the `ollama` module. Modules: `config` (`Settings` + `load_dotenv`),
   `ollama` (`OllamaClient`), `similarity` (`cosine`), `chunking`
   (`Document`/`Chunk`/`Chunker`/`load_documents`), `vectorstore` (`VectorStore` —
-  Qdrant wrapper, embedder injected), `generation`
+  Qdrant wrapper, embedder injected), `bm25` (`BM25Index`/`tokenize` — hand-rolled
+  lexical scoring, no dep), `retrievers` (`Hit` + `VectorRetriever`/`BM25Retriever`/
+  `HybridRetriever` (RRF)/`RerankRetriever` — one `retrieve(query, k)` interface so
+  they're swappable and measurable; `Hit` is Qdrant-hit-shaped so `display`/
+  `generation` work unchanged), `evaluation` (`GoldQuery`/`evaluate`/
+  `sanity_check_gold` + Recall@k / MRR / latency tables), `generation`
   (`format_context`/`generate`, `temperature` param), `prompts`
   (`GROUNDED_SYSTEM`/`NAIVE_SYSTEM`/`SALES_SYSTEM`), `display`
   (`banner`/`show_retrieval`/`show_chunks`/`print_answer`), `runlog`

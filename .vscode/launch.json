@@ -1,0 +1,130 @@
+{
+    // Run/debug configs for LocalLearn.
+    //
+    // Every config below is env-driven the same way the scripts are:
+    //   - "envFile" loads the gitignored repo-root .env (OLLAMA_URL, QDRANT_URL,
+    //     GEN_MODEL, MODE ...) into the debug process, so a debug run talks to the
+    //     ASUS exactly like `python scripts/dayN_*.py` from a shell does.
+    //   - "python" pins the repo .venv, so F5 works without first picking an
+    //     interpreter (same relative path on the Mac and on the ASUS).
+    //   - inline "env" entries WIN over envFile — that's how the Day 5 mode picker
+    //     overrides MODE without you editing .env.
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Current File (.env)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "python": "${workspaceFolder}/.venv/bin/python",
+            "envFile": "${workspaceFolder}/.env",
+            "env": {
+                // Unbuffered so the live prints and the tee'd result/ file stay in
+                // the same order as a normal terminal run.
+                "PYTHONUNBUFFERED": "1",
+                // scripts/ on the path so `from locallearn import ...` resolves even
+                // when the debugger is launched from the repo root.
+                "PYTHONPATH": "${workspaceFolder}/scripts"
+            },
+            // false = you can step INTO qdrant_client / httpx when you're debugging
+            // "is this retrieval or generation?" — the whole point of these days.
+            "justMyCode": false
+        },
+        {
+            "name": "Day 2 — Embeddings",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/day2_embeddings.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "python": "${workspaceFolder}/.venv/bin/python",
+            "envFile": "${workspaceFolder}/.env",
+            "env": {
+                "PYTHONUNBUFFERED": "1",
+                "PYTHONPATH": "${workspaceFolder}/scripts"
+            },
+            "justMyCode": false
+        },
+        {
+            "name": "Day 3 — Qdrant",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/day3_qdrant.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "python": "${workspaceFolder}/.venv/bin/python",
+            "envFile": "${workspaceFolder}/.env",
+            "env": {
+                "PYTHONUNBUFFERED": "1",
+                "PYTHONPATH": "${workspaceFolder}/scripts"
+            },
+            "justMyCode": false
+        },
+        {
+            "name": "Day 4 — RAG pipeline",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/day4_rag.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "python": "${workspaceFolder}/.venv/bin/python",
+            "envFile": "${workspaceFolder}/.env",
+            "env": {
+                "PYTHONUNBUFFERED": "1",
+                "PYTHONPATH": "${workspaceFolder}/scripts"
+            },
+            "justMyCode": false
+        },
+        {
+            // Prompts for the break to induce; MODE is injected as an env var, so
+            // you never have to edit .env (or the script) to switch failures.
+            "name": "Day 5 — Break RAG (pick MODE)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/day5_break_rag.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "python": "${workspaceFolder}/.venv/bin/python",
+            "envFile": "${workspaceFolder}/.env",
+            "env": {
+                "PYTHONUNBUFFERED": "1",
+                "PYTHONPATH": "${workspaceFolder}/scripts",
+                "MODE": "${input:day5Mode}"
+            },
+            "justMyCode": false
+        },
+        {
+            // No prompt — whatever MODE is set to in .env.
+            "name": "Day 5 — Break RAG (MODE from .env)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/day5_break_rag.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "python": "${workspaceFolder}/.venv/bin/python",
+            "envFile": "${workspaceFolder}/.env",
+            "env": {
+                "PYTHONUNBUFFERED": "1",
+                "PYTHONPATH": "${workspaceFolder}/scripts"
+            },
+            "justMyCode": false
+        }
+    ],
+    "inputs": [
+        {
+            "id": "day5Mode",
+            "type": "pickString",
+            "description": "Which failure to induce (MODE)",
+            "options": [
+                "chunking",
+                "retrieval",
+                "hallucination",
+                "stale",
+                "all"
+            ],
+            "default": "chunking"
+        }
+    ]
+}

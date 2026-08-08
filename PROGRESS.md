@@ -54,7 +54,7 @@ Code + Claude Code = **Mac only** (the plan). ASUS is headless infra.
 
 ## Log (newest first)
 
-### 2026-08-08 — Day 5 done (hallucination break took 3 attempts)
+### 2026-08-08 — Day 5 done (hallucination break took 3 attempts), Day 6 scaffolded
 
 - **Day 5 run.** Chunking / retrieval / stale breaks behaved as designed. The **hallucination break refused to break**, and chasing it was the real lesson — two of my hypotheses were falsified by measurement:
   - *H1: "drop the grounding prompt → it fabricates."* **Wrong.** `NAIVE_SYSTEM` hedged just like `GROUNDED_SYSTEM`. Reason: `NAIVE` still says "use the context", and `generation.format_context` still wraps everything in a `Context: [1]… Question:` scaffold — prompt **structure** is a guardrail independent of prompt text.
