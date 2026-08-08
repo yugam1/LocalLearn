@@ -16,8 +16,14 @@ def format_context(hits) -> str:
     return "\n\n".join(blocks)
 
 
-def generate(client, query: str, hits, system: str) -> str:
+def generate(client, query: str, hits, system: str, temperature: float = 0.0) -> str:
     """Hand the numbered context + question to the LLM under `system` and return
-    the answer. `client` is any OllamaClient-like object exposing .chat()."""
+    the answer. `client` is any OllamaClient-like object exposing .chat().
+
+    `temperature` defaults to 0 so every day's runs stay reproducible. Day 5's
+    hallucination break is the one caller that raises it: at temp 0 the model
+    takes the safest token every step, and hedging IS the safe token — which
+    suppresses fabrication even under a bad prompt and can fool you into
+    thinking your guardrail was never needed."""
     user = f"Context:\n{format_context(hits)}\n\nQuestion: {query}"
-    return client.chat(system=system, user=user)
+    return client.chat(system=system, user=user, temperature=temperature)

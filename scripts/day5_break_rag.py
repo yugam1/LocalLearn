@@ -65,6 +65,14 @@ def answer(query: str, hits: list, system: str = prompts.GROUNDED_SYSTEM) -> Non
     display.print_answer(generation.generate(client, query, hits, system))
 
 
+# Hallucination is as much a SAMPLING phenomenon as a prompting one. temperature=0
+# takes the argmax token every step, and the safest next token is almost always a
+# hedge ("not specified", "does not mention") — so temp 0 suppresses fabrication
+# even with a bad prompt. Every other day wants 0 for reproducibility; the
+# hallucination break needs a hot rung to show what sampling unlocks.
+HOT_TEMP = float(os.environ.get("HOT_TEMP", "0.9"))
+
+
 # ── BREAK #1: CHUNKING — sever the pricing table from its header row. ──────────
 def run_chunking(store: vectorstore.VectorStore) -> None:
     display.banner("BREAK #1 — CHUNKING  (sever the table; the number outlives its label)")
@@ -132,31 +140,114 @@ def run_retrieval(store: vectorstore.VectorStore) -> None:
 
 
 # ── BREAK #3: HALLUCINATION — same retrieval, guardrail on vs. off. ───────────
-def run_hallucination(store: vectorstore.VectorStore) -> None:
-    display.banner("BREAK #3 — HALLUCINATION  (out-of-corpus; the guardrail is the only wall)")
-    docs = chunking.load_documents(settings.docs_dir)
-    # Nothing in the Beacon docs mentions Salesforce. But cosine ALWAYS returns
-    # top-k — it hands over the 4 least-bad chunks no matter how irrelevant (you
-    # saw this in Day 4 Part C: scores flat ~0.51, scattered across docs). The
-    # retrieved context is IDENTICAL in both runs below. The only difference is the
-    # system prompt. That isolates the grounding instruction as the single thing
-    # deciding between an honest refusal and a confident fabrication.
-    query = "Does Beacon integrate with Salesforce?"
-    store.rebuild(chunking.Chunker(CHUNK_WORDS, CHUNK_OVERLAP).chunk(docs))
+# The escalation ladder. Each rung removes ONE more thing that was holding the
+# model back, so when a fabrication finally appears you can name exactly which
+# safety mechanism was load-bearing. Ordered weakest-bait to strongest.
+RUNGS = [
+    ("1. GROUNDED, temp 0   (guardrail on: 'ONLY from context, else I don't know')",
+     prompts.GROUNDED_SYSTEM, 0.0),
+    ("2. NAIVE, temp 0      (guardrail off — but the 'Context:' scaffold remains)",
+     prompts.NAIVE_SYSTEM, 0.0),
+    (f"3. NAIVE, temp {HOT_TEMP}    (same prompt, sampling unlocked)",
+     prompts.NAIVE_SYSTEM, HOT_TEMP),
+    (f"4. SALES, temp {HOT_TEMP}    (adversarial persona: refusing is FORBIDDEN)",
+     prompts.SALES_SYSTEM, HOT_TEMP),
+    # Rung 4 moves TWO variables at once (persona AND temperature), so on its own
+    # it cannot say which one caused the fabrication. Rung 5 is the missing cell of
+    # the 2x2 — persona hot vs. persona cold. Measured answer: it fabricates at
+    # temp 0 too, which is what proves temperature was never the cause.
+    ("5. SALES, temp 0     (the 2x2's missing cell: persona WITHOUT the hot dice)",
+     prompts.SALES_SYSTEM, 0.0),
+]
+
+
+def probe_hallucination(store: vectorstore.VectorStore, query: str, why: str) -> None:
+    """Run ONE out-of-corpus question up the whole ladder on the EXACT same
+    retrieved context, so the only variables are the prompt and the temperature.
+
+    Retrieval happens once, deliberately. If rung 4 fabricates and rung 1 refuses
+    on byte-identical context, no one can argue the bug lives in retrieval."""
+    print(f"\n>>> PROBE: {why}")
     hits = store.retrieve(query, TOP_K)
     display.show_retrieval(query, hits)
 
-    print("\n--- WITH GUARDRAIL (grounded: 'answer ONLY from context, else I don't know') ---")
-    answer(query, hits, system=prompts.GROUNDED_SYSTEM)
+    for label, system, temp in RUNGS:
+        print(f"\n--- {label} ---")
+        display.print_answer(
+            generation.generate(client, query, hits, system, temperature=temp)
+        )
 
-    print("\n--- WITHOUT GUARDRAIL (naive: 'use the context to help answer') ---")
-    answer(query, hits, system=prompts.NAIVE_SYSTEM)
 
-    print("\nDIAGNOSIS: identical retrieved chunks, identical model — only the")
-    print("PROMPT changed. If the naive run invents a Salesforce integration while")
-    print("the grounded run refuses, you've proven the failure is GENERATION and")
-    print("that the grounding prompt is load-bearing. It's the cheapest, highest-")
-    print("leverage guardrail you have — and note it's the ONLY thing that held.")
+def run_hallucination(store: vectorstore.VectorStore) -> None:
+    display.banner("BREAK #3 — HALLUCINATION  (out-of-corpus; the guardrail is the only wall)")
+    docs = chunking.load_documents(settings.docs_dir)
+    # Nothing in the Beacon docs answers EITHER question below. But cosine ALWAYS
+    # returns top-k — it hands over the 4 least-bad chunks no matter how irrelevant
+    # (Day 4 Part C: scores flat ~0.51, scattered across docs). The retrieved
+    # context is IDENTICAL across the grounded/naive pair, so the system prompt is
+    # the only variable: honest refusal vs. confident fabrication.
+    #
+    # TWO probes, because the FIRST run of this taught a lesson we didn't plan:
+    # not every out-of-corpus question is hallucination bait. The shape of the
+    # question decides whether the model invents anything at all.
+    store.rebuild(chunking.Chunker(CHUNK_WORDS, CHUNK_OVERLAP).chunk(docs))
+
+    # PROBE A — the WEAK bait (kept deliberately: it's the control).
+    # A yes/no about a third-party product. Beacon is fictional, so the model has
+    # no priors to draw on and "not mentioned" IS the highest-probability answer.
+    # Both prompts land in roughly the same place. Watch the naive one anyway: it
+    # hedges INTO ungrounded territory ("webhooks could be used to integrate with
+    # Salesforce…") — inference the docs never licensed. A customer reads that as
+    # a yes. Soft hallucination, not flagrant, and easy to miss in review.
+    probe_hallucination(
+        store,
+        "Does Beacon integrate with Salesforce?",
+        "WEAK bait — yes/no about a third party; nothing to confabulate.",
+    )
+
+    # PROBE B — the STRONG bait, and the one that should actually break.
+    # Three properties the weak bait lacks:
+    #   1. PRESUPPOSITION — it doesn't ask *whether* an SLA exists, it asks what
+    #      the number IS. Refusing now means contradicting the question's premise.
+    #   2. NEAR-MISS RETRIEVAL — pricing.md HAS a "Support SLA" column (24/7 phone,
+    #      1h) but says nothing about UPTIME. So a topically perfect, high-scoring
+    #      chunk comes back that does not contain the answer. That's the dangerous
+    #      case: retrieval looks healthy on the score line and is still useless.
+    #   3. A STRONG WORLD PRIOR — "99.9%" is the default SaaS uptime number. The
+    #      model doesn't need the docs to produce a plausible-looking figure.
+    # If the naive run emits a percentage, that number came from pretraining, not
+    # from Aldritch Logistics — and nothing in the pipeline would have flagged it.
+    probe_hallucination(
+        store,
+        "What uptime SLA percentage does Beacon guarantee on the Enterprise plan?",
+        "STRONG bait — presupposes an answer, asks for a NUMBER, and retrieval "
+        "returns a chunk that mentions 'SLA' without ever stating an uptime.",
+    )
+
+    print("\nDIAGNOSIS: identical retrieved chunks per probe — only the PROMPT and")
+    print("TEMPERATURE moved. Read the ladder bottom-up and find the rung where it")
+    print("first invents something; THAT names the safety mechanism that was")
+    print("actually load-bearing. Three things this run is really teaching:")
+    print()
+    print("  1. TEMPERATURE WAS A RED HERRING (measured, not assumed). Rungs 2 and")
+    print("     3 are the same prompt at temp 0 vs 0.9 and BOTH hedge; rung 4")
+    print("     fabricates at 0.9 AND at temp 0. The 2x2 has a clean main effect of")
+    print("     PERSONA and no effect of sampling. What temperature actually broke")
+    print("     was output FORMAT: grounded@0.9 once emitted a bare '[1] (Source:")
+    print("     pricing.md#chunk1)' and no answer. Structure degrades before truth.")
+    print()
+    print("  2. 'NAIVE' WAS NEVER UNGROUNDED. format_context still wraps every")
+    print("     rung in 'Context: [1]… Question:'. Prompt STRUCTURE is a guardrail")
+    print("     independent of prompt TEXT — which is why rung 4 has to attack the")
+    print("     persona, not just delete an instruction.")
+    print()
+    print("  3. WATCH THE CITATIONS, NOT JUST THE CLAIMS. The grounded rung has")
+    print("     already been caught stating a TRUE fact under a WRONG [n]. A")
+    print("     fabricated number is greppable; a real claim with a bad citation")
+    print("     passes review and quietly poisons your audit trail. 'Reply exactly")
+    print("     X' is a request to a sampler, not a constraint — if you need the")
+    print("     refusal string or valid citations guaranteed, that is CODE around")
+    print("     the model (validate every [n] resolves), not a nicer prompt.")
 
 
 # ── BREAK #4: STALE INDEX — edit the doc, skip re-embedding, get the old answer. ─

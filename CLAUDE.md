@@ -28,8 +28,9 @@ explain the tradeoff.** Systems, tradeoffs, and failure modes over theory.
   shadow the `ollama` module. Modules: `config` (`Settings` + `load_dotenv`),
   `ollama` (`OllamaClient`), `similarity` (`cosine`), `chunking`
   (`Document`/`Chunk`/`Chunker`/`load_documents`), `vectorstore` (`VectorStore` —
-  Qdrant wrapper, embedder injected), `generation` (`format_context`/`generate`),
-  `prompts` (`GROUNDED_SYSTEM`/`NAIVE_SYSTEM`), `display`
+  Qdrant wrapper, embedder injected), `generation`
+  (`format_context`/`generate`, `temperature` param), `prompts`
+  (`GROUNDED_SYSTEM`/`NAIVE_SYSTEM`/`SALES_SYSTEM`), `display`
   (`banner`/`show_retrieval`/`show_chunks`/`print_answer`), `runlog`
   (`Tee`/`tee_stdout`). Works because a script's own dir is on `sys.path`.
 - `notes/dayN.md` — the write-up: observations + "the answers in my own words"

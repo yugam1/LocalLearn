@@ -38,21 +38,36 @@ Code + Claude Code = **Mac only** (the plan). ASUS is headless infra.
 
 ## Status
 
-**Current day:** Day 4 done (full RAG run + notes filled, incl. Part C grounding test). Day 5 (break RAG 4 ways) scaffolded — script + notes template written, not yet run. All day scripts refactored onto a shared `scripts/locallearn/` package + now self-log to `result/`.
-**Last updated:** 2026-08-05
+**Current day:** Day 5 **done and written up** (all four breaks run; the hallucination break needed three attempts and falsified two hypotheses — see below). Day 6 (hybrid retrieval + reranker + measurement) **scaffolded, not yet run**.
+**Last updated:** 2026-08-08
 
 ### Week 1 checklist
 - [x] **Day 1** — Ollama up; talk to API; observe tokens/context; break context window; write `notes/day1.md`
 - [x] **Day 2** — embeddings by hand (`nomic-embed-text`), cosine similarity script; found false pos/neg + polarity blind spot
 - [x] **Day 3** — Qdrant in Docker; real similarity search; matched numpy brute force exactly (0.00000 gap), numpy ~74× faster at N=13
 - [x] **Day 4** — full RAG pipeline (ingest → chunk → embed → store → retrieve → answer w/ citations); happy-path + out-of-corpus grounding test both run
-- [~] **Day 5** — break RAG 4 ways: chunking / retrieval / hallucination / stale index — **scaffolded, not yet run**
-- [ ] **Day 6** — improve retrieval (hybrid BM25+vector, reranker); measure if quality actually improved
+- [x] **Day 5** — break RAG 4 ways: chunking / retrieval / hallucination / stale index — run + notes filled
+- [~] **Day 6** — improve retrieval (hybrid BM25+vector, reranker); measure if quality actually improved — **scaffolded, not yet run**
 - [ ] **Day 7** — eval harness: 20-Q gold set, exact-match + LLM-as-judge, produce a %
 
 ---
 
 ## Log (newest first)
+
+### 2026-08-08 — Day 5 done (hallucination break took 3 attempts)
+
+- **Day 5 run.** Chunking / retrieval / stale breaks behaved as designed. The **hallucination break refused to break**, and chasing it was the real lesson — two of my hypotheses were falsified by measurement:
+  - *H1: "drop the grounding prompt → it fabricates."* **Wrong.** `NAIVE_SYSTEM` hedged just like `GROUNDED_SYSTEM`. Reason: `NAIVE` still says "use the context", and `generation.format_context` still wraps everything in a `Context: [1]… Question:` scaffold — prompt **structure** is a guardrail independent of prompt text.
+  - *H2: "temp 0 is suppressing it; raise to 0.9."* **Wrong, and measured.** Ran the 2×2 {naive, sales} × {temp 0, 0.9}: naive hedges at BOTH temps, the sales persona fabricates at BOTH. Clean main effect of **persona**, zero effect of sampling. Verified temperature was actually reaching Ollama (4 calls at temp 0 → 1 distinct output; at 0.9 → 4 distinct), so this is a real result, not a plumbing bug. Mechanism: temperature only flips tokens whose candidates are close; the model holds no belief that Beacon publishes an uptime figure, so that gap is several logits and 0.9 doesn't dent it. **Temperature = how you sample from a belief; the prompt = what the belief is.**
+  - **What finally broke it:** a third prompt rung, `SALES_SYSTEM` — a sales-engineer persona forbidding "I don't know" and licensing *"state the industry-standard figure"*. Fabricated a **99.99% uptime SLA** (narrating its own source: *"a standard figure in the industry"*), a flat **"Yes"** on Salesforce integration, and a nonexistent **API plus fake social proof** (*"we've seen many customers…"*). Corpus check: `grep -in "api\|integrat\|uptime\|99\." docs/*.md` → **nothing**.
+  - **Better bug found by accident:** the **grounded** prompt broke its own contract — asked for an uptime %, it skipped the mandated exact refusal string and cited `[3]` for a fact that lives in `[1]`. Reproduced again in the sampling check with a different wrong `[n]`. **A true claim under a wrong citation beats every eyeball review**; a fabricated number is greppable. Takeaway: "reply exactly X" / "cite sources" are requests to a sampler, not constraints — enforce in code (validate every `[n]` resolves and the cited chunk contains the claim).
+  - Temperature's real effect was **format collapse**, not lying: grounded@0.9 once emitted a bare `[1] (Source: pricing.md#chunk1)` with no answer, and other hot variants miscited or swapped *support* SLA for *uptime* SLA. **Precision degrades before truth** — and a `%`-based fabrication detector passes all of those.
+  - Package changes: `prompts.SALES_SYSTEM` added; `generation.generate` now takes `temperature` (default 0.0, so other days are unchanged); `day5_break_rag.py` hallucination mode is now a 5-rung ladder over two probes (weak bait + a presupposition bait that demands a number).
+- **Day 6 scaffold (not yet run).** `scripts/day6_better_retrieval.py` — four retrievers over one labelled gold set: `vector` (baseline) / `bm25` / `hybrid` (RRF, fuses **ranks** not scores, since cosine ~0.5-0.75 and BM25 0-15+ aren't comparable) / `rerank` (hybrid over-fetches 6, `llama3.1:8b` pointwise-rescores → deliberately slow, so the latency cost is visible). New modules: `bm25` (hand-rolled Okapi, no dep), `retrievers` (one `retrieve(query,k)` interface; `Hit` is Qdrant-shaped so `display`/`generation` are untouched), `evaluation` (`GoldQuery`, Recall@k, MRR, p50/p95, comparison + per-query + disagreement tables). Collection `day6_hybrid`.
+  - Gold set = 10 queries graded by **literal substring** (no LLM needed), each tagged with a written-down prediction (`lexical` / `semantic` / `either`) so the run can falsify it.
+  - **The harness had a bug before it had a result:** grading the ">2h silent" query on `"30 seconds"` also matched `overview.md`'s "GPS ping every 30 seconds", so a wrong chunk would have scored **correct**. Added `evaluation.sanity_check_gold()`, which hard-fails on *unwinnable* (phrase in no chunk — drags all arms down equally, so the comparison still looks sane while the absolute numbers are garbage) and *ambiguous* (phrase spans multiple docs; must be acknowledged with `ambiguous_ok=True`).
+  - Verified offline (no ASUS): all 10 gold phrases present + unambiguous, BM25 arm alone scores **Recall@4 0.80 / MRR 0.683 / p50 <0.1 ms**, perfect on all 4 lexical queries, misses 2 semantic ones. One prediction is **already** wrong — BM25 wins `"Can a read-only user draw zones on the map?"` at rank 1 despite being tagged `semantic`.
+- **Next:** user runs `python scripts/day6_better_retrieval.py` against the ASUS → `result/day6.txt`, then fill `notes/day6.md` (the four-row table + which predictions failed + whether the reranker earned its latency).
 
 ### 2026-08-05 — Refactor: shared `locallearn` package + self-logging (no new day)
 - **Why:** every day script had copy-pasted the same plumbing (`load_dotenv`, `embed`, `cosine`, `connect`, chunking, `generate`, display helpers). Pulled the common code out so each `dayN` file shows only its unique teaching content (corpus, queries, breaks, diagnoses), and applied OOP/SOLID.
