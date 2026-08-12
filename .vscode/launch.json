@@ -110,6 +110,70 @@
                 "PYTHONPATH": "${workspaceFolder}/scripts"
             },
             "justMyCode": false
+        },
+        {
+            // The full bake-off: vector / bm25 / hybrid / rerank scored over the
+            // gold set. Slowest config in the repo by a wide margin — the rerank
+            // arm is RERANK_FETCH_K x 10 gold queries sequential LLM calls (~60).
+            // That cost IS the measurement, so this is the one whose numbers go in
+            // notes/day6.md.
+            "name": "Day 6 — Retrieval bake-off (all 4 arms)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/day6_better_retrieval.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "python": "${workspaceFolder}/.venv/bin/python",
+            "envFile": "${workspaceFolder}/.env",
+            "env": {
+                "PYTHONUNBUFFERED": "1",
+                "PYTHONPATH": "${workspaceFolder}/scripts"
+            },
+            "justMyCode": false
+        },
+        {
+            // Fast iteration loop: drops the reranker, so the only network cost is
+            // embedding each query and every arm is sub-second. Use while editing
+            // the gold set or debugging the RRF fusion — breakpoints in
+            // retrievers.HybridRetriever.retrieve are actually usable at this speed.
+            "name": "Day 6 — fast (no reranker)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/day6_better_retrieval.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "python": "${workspaceFolder}/.venv/bin/python",
+            "envFile": "${workspaceFolder}/.env",
+            "env": {
+                "PYTHONUNBUFFERED": "1",
+                "PYTHONPATH": "${workspaceFolder}/scripts",
+                // ARMS also controls table ORDER: the first arm is the baseline
+                // every other row is reported as a delta against.
+                "ARMS": "vector,bm25,hybrid"
+            },
+            "justMyCode": false
+        },
+        {
+            // Sweep k without editing the script. Day 5 Break #2 found k's FLOOR
+            // (k=1 dropped half a two-chunk answer); this finds the ceiling — watch
+            // where Recall@k stops climbing, because past that point a bigger k is
+            // just more tokens, more cost, and more room for the model to wander.
+            // Reranker off so a sweep is a few seconds per value, not minutes.
+            "name": "Day 6 — sweep k (pick TOP_K)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/day6_better_retrieval.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "python": "${workspaceFolder}/.venv/bin/python",
+            "envFile": "${workspaceFolder}/.env",
+            "env": {
+                "PYTHONUNBUFFERED": "1",
+                "PYTHONPATH": "${workspaceFolder}/scripts",
+                "ARMS": "vector,bm25,hybrid",
+                "TOP_K": "${input:day6TopK}"
+            },
+            "justMyCode": false
         }
     ],
     "inputs": [
@@ -125,6 +189,23 @@
                 "all"
             ],
             "default": "chunking"
+        },
+        {
+            "id": "day6TopK",
+            "type": "pickString",
+            "description": "How many chunks to retrieve (TOP_K)",
+            // 1 reproduces the Day 5 Break #2 failure through Day 6's metrics:
+            // Recall@1 is the honest measure of how often the very top hit is
+            // right. 4 is the Day 4/5 baseline. 8 = all-but-two of the 10 chunks,
+            // where Recall is near-meaningless and MRR is the only useful column.
+            "options": [
+                "1",
+                "2",
+                "4",
+                "6",
+                "8"
+            ],
+            "default": "4"
         }
     ]
 }

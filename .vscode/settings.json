@@ -1,0 +1,36 @@
+{
+    // Editor-side wiring so a run from ANY entry point (F5, Code Runner, a
+    // terminal) hits the same interpreter the debug configs in launch.json use.
+    // The .venv is the only place qdrant_client / httpx are installed.
+    "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+
+    // Code Runner defaults to running the SELECTION when text is highlighted —
+    // it copies it into scripts/tempCodeRunnerFile.py and runs that. Half a
+    // docstring is not a program, so you get a SyntaxError from a file you never
+    // wrote. Always run the whole file instead.
+    "code-runner.ignoreSelection": true,
+
+    // Default executor is `/usr/bin/env python3` = system Python, which has none
+    // of the deps. Pin the repo venv; -u keeps live prints and the tee'd
+    // result/ file in the same order.
+    "code-runner.executorMap": {
+        "python": "$workspaceRoot/.venv/bin/python -u $fullFileName"
+    },
+    // ...and this is what makes the line above actually apply. Every dayN_*.py
+    // starts with `#!/usr/bin/env python3`, and Code Runner honours a shebang
+    // OVER executorMap by default — which is how you get system python3 and
+    // ModuleNotFoundError: requests. The shebang stays (it's correct for
+    // `chmod +x` on the ASUS); the editor just stops obeying it.
+    "code-runner.respectShebang": false,
+    // Run from the repo root, not scripts/ — matches launch.json's "cwd".
+    // (Settings.load_dotenv() finds .env by path either way, but keep them same.)
+    "code-runner.fileDirectoryAsCwd": false,
+    // Real terminal, not the Output panel: these days print a lot and the
+    // Output panel isn't a TTY.
+    "code-runner.runInTerminal": true,
+    "code-runner.clearPreviousOutput": true,
+
+    "files.exclude": {
+        "**/tempCodeRunnerFile.py": true
+    }
+}

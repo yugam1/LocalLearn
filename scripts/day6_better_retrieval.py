@@ -31,7 +31,7 @@ not answer-level — answer grading needs an LLM judge, which is Day 7. Retrieva
 recall is the ceiling on everything downstream: if the chunk never arrives, no
 prompt can save you.
 
-Self-logs to result/day6.txt. Run it, then fill notes/day6.md from what happened.
+Self-logs to result/day6.txt. Run it, then fill notes/day6.md from what happened.`
 """
 import os
 
@@ -165,7 +165,14 @@ def build(store: vectorstore.VectorStore):
 
     Both arms must see identical chunks or the comparison is meaningless — any
     difference in the table has to come from the retrieval strategy, not from one
-    arm having been given better source material."""
+    arm having been given better source material.
+
+    Note the asymmetry in where the two indexes live: dense goes over the wire to
+    Qdrant on the ASUS, sparse is built in-process in milliseconds. That split is
+    most of the latency story the results table is about to show.
+
+    Returns the chunk list too, because the gold-set sanity check needs to grep
+    the same chunks the retrievers will be searching."""
     docs = chunking.load_documents(settings.docs_dir)
     chunks = chunking.Chunker(CHUNK_WORDS, CHUNK_OVERLAP).chunk(docs)
     print(f"\nIngested {len(docs)} docs -> {len(chunks)} chunks "
@@ -180,6 +187,18 @@ def build(store: vectorstore.VectorStore):
 
 
 def main() -> None:
+    """Drive the whole experiment: ingest once, validate the gold set, score every
+    arm on it, then show whether the winning arm changes a real answer.
+
+    Ordered as an experiment rather than a demo:
+      0. fail fast on infra (model present, Qdrant reachable) before doing work;
+      1. build ONE set of chunks and share it with both indexes;
+      2. sanity-check the gold set — test the test before trusting its numbers;
+      3. Part A, the table: quality and latency for each arm vs. the baseline;
+      4. Part B, the payoff: same query and prompt, baseline vs. hybrid, so the
+         metric has to justify itself in user-visible output rather than in a
+         spreadsheet.
+    """
     client.require_model(settings.gen_model.split(":")[0])
     store = vectorstore.VectorStore.connect(
         settings.qdrant_url, COLLECTION, embedder=client)

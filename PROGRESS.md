@@ -38,8 +38,8 @@ Code + Claude Code = **Mac only** (the plan). ASUS is headless infra.
 
 ## Status
 
-**Current day:** Day 5 **done and written up** (all four breaks run; the hallucination break needed three attempts and falsified two hypotheses — see below). Day 6 (hybrid retrieval + reranker + measurement) **scaffolded, not yet run**.
-**Last updated:** 2026-08-08
+**Current day:** Day 6 **done and written up** — the run's headline is a negative result: the vector baseline was **already at Recall@4 = 1.00**, so hybrid bought nothing measurable (+0.008 MRR, two wins two losses) and the reranker bought +0.117 MRR for **205× latency**. Day 7 (eval harness, LLM-as-judge) not started.
+**Last updated:** 2026-08-09
 
 ### Week 1 checklist
 - [x] **Day 1** — Ollama up; talk to API; observe tokens/context; break context window; write `notes/day1.md`
@@ -47,12 +47,26 @@ Code + Claude Code = **Mac only** (the plan). ASUS is headless infra.
 - [x] **Day 3** — Qdrant in Docker; real similarity search; matched numpy brute force exactly (0.00000 gap), numpy ~74× faster at N=13
 - [x] **Day 4** — full RAG pipeline (ingest → chunk → embed → store → retrieve → answer w/ citations); happy-path + out-of-corpus grounding test both run
 - [x] **Day 5** — break RAG 4 ways: chunking / retrieval / hallucination / stale index — run + notes filled
-- [~] **Day 6** — improve retrieval (hybrid BM25+vector, reranker); measure if quality actually improved — **scaffolded, not yet run**
+- [x] **Day 6** — improve retrieval (hybrid BM25+vector, reranker); measured — and the measurement said the "improvement" was a no-op on this corpus
 - [ ] **Day 7** — eval harness: 20-Q gold set, exact-match + LLM-as-judge, produce a %
 
 ---
 
 ## Log (newest first)
+
+### 2026-08-09 — Day 6 run: the improvement didn't improve anything (and that's the result)
+
+- **Ran `day6_better_retrieval.py`** against the ASUS → `result/day6.txt`; `notes/day6.md` filled. 10 gold queries, k=4, all 4 arms.
+- **The table** (Recall@4 / MRR / p50 / p95 ms): `vector` **1.00 / 0.817 / 83.5 / 190.2** · `bm25` **0.80 / 0.683 / 0.1 / 0.1** · `hybrid` **1.00 / 0.825 / 74.5 / 261.2** · `rerank` **1.00 / 0.933 / 17098.9 / 19069.6** (**204.9×** baseline p50).
+- **Headline = the baseline was already at the ceiling.** Recall@4 was **1.00 before any change**, so there was no recall to buy and the whole experiment reduces to a ranking question. Day 5 Break #2 was never a retrieval-quality bug — it was a **`k` bug**, and `k=4` had already fixed it. Built the right harness for the wrong hypothesis.
+- **Hybrid is a wash: +0.008 MRR = 2 wins − 2 losses.** Wins: URL query 3→2, "stop being charged" 2→1. **Losses: hybrid was WORSE than the vector arm on two queries** — "van's tracker stopped showing up" (vector 3, bm25 MISS, **hybrid 4**) and the lunch-alert query (vector 1, bm25 3, **hybrid 2**). Mechanism: **RRF has no notion of arm confidence** — it rewards agreement, so a confidently-wrong BM25 top-3 earns real credit and demotes the right chunk. That's the price of throwing away magnitudes to dodge calibration.
+- **Recall@k flips the winner depending on k** (recomputed from the per-query rank table): k=2 → hybrid **0.90** vs vector 0.80; k=3 → vector **1.00** vs hybrid 0.90; k=4 → tie 1.00. So "Recall@k improved" is not a claim until k is pinned; MRR is the metric that integrates over all k and correctly calls it a wash.
+- **Reranker: right result, unshippable implementation.** +0.117 MRR (8/10 → **9/10 queries at rank 1**), fixed every hybrid mis-rank — but **17.1 s/query**. The one query it couldn't fix was the one its own first stage buried at rank 4: *a reranker can only reorder the set it was handed.* The 205× indicts **pointwise 8B generative reranking on a 4GB GPU** (6 sequential calls ≈ 2.8 s each), not reranking — a cross-encoder does it batched in tens of ms. Next move: real cross-encoder, then re-measure.
+- **Predictions scoreboard: 4/8 confirmed, 1 wrong, 3 untestable** (both arms tied at rank 1). The wrong one — `"Can a read-only user draw zones on the map?"`, tagged `semantic`, **BM25 won at rank 1** because the query leaks literal tokens (`map`/`user`/`zones`) to the target chunk. **A "semantic" test query sharing content words with its target isn't testing semantics** — gold-set design bug, caught only because the prediction was written down. Also: vector won 3 of 4 *lexical* queries at rank 1 — with 10 chunks there's nothing for a smeared identifier embedding to collide with, so **the lexical advantage is a function of corpus size/near-duplicate density**, and n=10 is too small to detect the effect hybrid exists for.
+- **Part B — better retrieval did NOT change the answer.** vector and hybrid returned *different* context (only 2 of 4 chunks shared) and produced a **byte-identical** answer, because both put the answer chunk at rank 1 and the grounded prompt ignored ranks 2–4. MRR gains below the top slot are invisible to the user — what they actually buy is **margin before a k reduction breaks you**, and I should claim that rather than implying answers got better.
+- **Two harness bugs the run exposed:** (1) the table printed hybrid as **0.9× latency (faster)**, which the call graph forbids — `HybridRetriever` calls the vector arm *then* does more work; 9 ms is noise on an ~80 ms LAN embed round-trip (hybrid p95 is higher: 261 vs 190). *A benchmark reporting a physically impossible speedup is telling you n is too small* — need repeats, not 1 sample/query. (2) **the reranker's raw 0–10 LLM scores are never logged**, so "did it emit lots of ties?" is unanswerable — it moved ranks on 3/10 queries so it was discriminating, but that's inference. Log `hit.parts["llm"]`.
+- **Verdict:** don't ship hybrid on this evidence (noise-level gain, 2 regressions, a second index to keep in sync — cf. Day 5's stale-index break); keep the reranker's *result*, replace its implementation. **The keeper is `evaluation.py`** — it's the only thing today that stopped a no-op from shipping, and it's Day 7's skeleton.
+- **Next:** Day 7 — 20-question gold set + LLM-as-judge on top of `GoldQuery`/`evaluate()`, producing an answer-level %. Watch for the two harnesses disagreeing: perfect retrieval + wrong answer = a generation bug (Day 5's territory).
 
 ### 2026-08-08 — Day 5 done (hallucination break took 3 attempts), Day 6 scaffolded
 

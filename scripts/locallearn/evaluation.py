@@ -53,11 +53,26 @@ class GoldQuery:
     ambiguous_ok: bool = False
 
     def matches(self, payload: dict) -> bool:
+        """The entire grader: is the answer-bearing substring in this chunk?
+
+        Case-insensitive substring, nothing cleverer. That cheapness is the
+        feature — grading costs no LLM call and cannot itself hallucinate, so a
+        disagreement in the results table is always about retrieval and never
+        about the judge. The price is that the phrase must be unique enough to
+        be unambiguous, which is exactly what sanity_check_gold() enforces.
+        """
         return self.must_contain.lower() in payload["text"].lower()
 
 
 @dataclass
 class QueryResult:
+    """One (retriever, gold query) cell: how the retriever did on this question.
+
+    Keeps `top_refs` even when the query succeeded, because the debugging value
+    is in what it retrieved INSTEAD — a miss is only diagnosable if you can see
+    the four wrong chunks it preferred.
+    """
+
     gold: GoldQuery
     rank: int | None  # 1-based rank of the first correct chunk; None = missed
     latency_ms: float
@@ -65,28 +80,51 @@ class QueryResult:
 
     @property
     def rr(self) -> float:
+        """Reciprocal rank: 1.0 at rank 1, 0.5 at rank 2, 0.0 on a miss.
+
+        The 1/rank curve is deliberately harsh at the top — moving a chunk from
+        rank 2 to rank 1 is worth more than moving it from 8 to 4, which matches
+        what actually matters when k gets trimmed to save prompt tokens.
+        """
         return 1.0 / self.rank if self.rank else 0.0
 
 
 @dataclass
 class RunResult:
+    """One retriever's full pass over the gold set — one row of the table."""
+
     name: str
     per_query: list[QueryResult]
 
     @property
     def recall(self) -> float:
+        """Fraction of queries where the right chunk landed anywhere in top-k.
+
+        The ceiling metric: whatever this number is, no prompt, model, or
+        temperature can push end-to-end accuracy above it.
+        """
         return sum(1 for r in self.per_query if r.rank) / len(self.per_query)
 
     @property
     def mrr(self) -> float:
+        """Mean reciprocal rank — recall weighted by HOW HIGH the chunk landed.
+
+        Two retrievers can tie on Recall@4 while one puts every answer at rank 1
+        and the other at rank 4. MRR is what separates them, and it's the early
+        warning that a k reduction would wreck you.
+        """
         return sum(r.rr for r in self.per_query) / len(self.per_query)
 
     @property
     def p50_ms(self) -> float:
+        """Typical per-query latency. The cost half of the quality/cost table —
+        an MRR gain is only an improvement once you've named what it cost."""
         return statistics.median(r.latency_ms for r in self.per_query)
 
     @property
     def p95_ms(self) -> float:
+        """Tail latency — the number an SLO is written against, not the average.
+        A reranker with a fine p50 and a brutal p95 is still a bad pager night."""
         # With ~10 queries this is really "the worst one" — labelled p95 because
         # that's the number you'd actually be held to in production. Small-N tail
         # statistics are shaky; the ORDER of magnitude is the honest takeaway.
@@ -148,7 +186,18 @@ def sanity_check_gold(gold: list[GoldQuery], chunks) -> None:
 
 
 def evaluate(retriever, gold: list[GoldQuery], k: int) -> RunResult:
-    """Run one retriever over the whole gold set, timing every query."""
+    """Run one retriever over the whole gold set, timing every query.
+
+    The only thing that varies between arms is the `retriever` argument — same
+    chunks, same queries, same k — so any difference in the resulting table is
+    attributable to the retrieval strategy and nothing else. That's the whole
+    reason this takes a retriever rather than building one.
+
+    Timing wraps ONLY retrieve(), deliberately: it includes the embed call and
+    (for the rerank arm) its LLM scoring calls, because that is what a request
+    would actually wait on, but excludes grading, which is test-harness cost the
+    user never pays.
+    """
     results = []
     for g in gold:
         t0 = time.perf_counter()
