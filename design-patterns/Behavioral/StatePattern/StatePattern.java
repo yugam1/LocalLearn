@@ -77,31 +77,20 @@ class VendingMachine implements VMState {
         state = new IdleState();
     }
 
+    // TODO: delegate to the current state; on success, transition to the next state (Idle -> Ready -> Dispensing -> Idle)
     @Override
     public boolean insertCoin() {
-        if (state.insertCoin()) {
-            setState(new ReadyState());
-            return true;
-        }
-        return false;
+        throw new UnsupportedOperationException("TODO: implement insertCoin()");
     }
 
     @Override
     public boolean selectProduct() {
-        if (state.selectProduct()) {
-            setState(new DispensingState());
-            return true;
-        }
-        return false;
+        throw new UnsupportedOperationException("TODO: implement selectProduct()");
     }
 
     @Override
     public boolean dispense() {
-        if (state.dispense()) {
-            setState(new IdleState());
-            return true;
-        }
-        return false;
+        throw new UnsupportedOperationException("TODO: implement dispense()");
     }
 }
 
@@ -116,3 +105,31 @@ public class StatePattern {
 
     }
 }
+
+/*
+ * SOLUTIONS (reference only - try to implement it yourself first)
+ *
+ * public boolean insertCoin() {
+ *     if (state.insertCoin()) {
+ *         setState(new ReadyState());
+ *         return true;
+ *     }
+ *     return false;
+ * }
+ *
+ * public boolean selectProduct() {
+ *     if (state.selectProduct()) {
+ *         setState(new DispensingState());
+ *         return true;
+ *     }
+ *     return false;
+ * }
+ *
+ * public boolean dispense() {
+ *     if (state.dispense()) {
+ *         setState(new IdleState());
+ *         return true;
+ *     }
+ *     return false;
+ * }
+ */

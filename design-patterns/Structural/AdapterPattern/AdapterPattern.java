@@ -17,8 +17,9 @@ class PaymentAdapter implements PaymentGateway {
         this.oldProcessor = oldProcessor;
     }
 
+    // TODO: adapt this call to the old processor's makePayment() method
     public void pay(double amount) {
-        oldProcessor.makePayment(amount); // adapts method
+        throw new UnsupportedOperationException("TODO: implement pay()");
     }
 }
 
@@ -29,3 +30,11 @@ public class AdapterPattern {
         gateway.pay(250.0);
     }
 }
+
+/*
+ * SOLUTIONS (reference only - try to implement it yourself first)
+ *
+ * public void pay(double amount) {
+ *     oldProcessor.makePayment(amount);
+ * }
+ */

@@ -29,12 +29,13 @@ class MilkDecorator implements Coffee {
         this.coffee = coffee;
     }
 
+    // TODO: return the wrapped coffee's cost/description plus this decorator's own contribution
     public double cost() {
-        return coffee.cost() + 2;
+        throw new UnsupportedOperationException("TODO: implement cost() for MilkDecorator");
     }
 
     public String description() {
-        return coffee.description() + ", Milk";
+        throw new UnsupportedOperationException("TODO: implement description() for MilkDecorator");
     }
 }
 
@@ -45,11 +46,34 @@ class SugarDecorator implements Coffee {
         this.coffee = coffee;
     }
 
+    // TODO: return the wrapped coffee's cost/description plus this decorator's own contribution
     public double cost() {
-        return coffee.cost() + 1;
+        throw new UnsupportedOperationException("TODO: implement cost() for SugarDecorator");
     }
 
     public String description() {
-        return coffee.description() + ", Sugar";
+        throw new UnsupportedOperationException("TODO: implement description() for SugarDecorator");
     }
 }
+
+/*
+ * SOLUTIONS (reference only - try to implement it yourself first)
+ *
+ * // MilkDecorator
+ * public double cost() {
+ *     return coffee.cost() + 2;
+ * }
+ *
+ * public String description() {
+ *     return coffee.description() + ", Milk";
+ * }
+ *
+ * // SugarDecorator
+ * public double cost() {
+ *     return coffee.cost() + 1;
+ * }
+ *
+ * public String description() {
+ *     return coffee.description() + ", Sugar";
+ * }
+ */

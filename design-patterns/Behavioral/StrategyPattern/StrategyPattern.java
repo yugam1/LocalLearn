@@ -17,12 +17,13 @@ class UpiPayment implements PaymentStrategy {
 class PaymentContext {
     private PaymentStrategy strategy;
 
+    // TODO: implement setStrategy() and payAmount() so the context delegates to whichever strategy is set
     public void setStrategy(PaymentStrategy strategy) {
-        this.strategy = strategy;
+        throw new UnsupportedOperationException("TODO: implement setStrategy()");
     }
 
     public void payAmount(int amount) {
-        strategy.pay(amount);
+        throw new UnsupportedOperationException("TODO: implement payAmount()");
     }
 }
 
@@ -37,3 +38,15 @@ public class StrategyPattern {
         context.payAmount(300);
     }
 }
+
+/*
+ * SOLUTIONS (reference only - try to implement it yourself first)
+ *
+ * public void setStrategy(PaymentStrategy strategy) {
+ *     this.strategy = strategy;
+ * }
+ *
+ * public void payAmount(int amount) {
+ *     strategy.pay(amount);
+ * }
+ */

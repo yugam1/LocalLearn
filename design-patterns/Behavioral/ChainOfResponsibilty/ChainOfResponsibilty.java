@@ -10,35 +10,26 @@ abstract class Support {
 }
 
 class PointOfContact extends Support {
+    // TODO: handle requests with lvl <= 1 here, otherwise pass the request to next
     @Override
     public void handleRequest(int lvl) {
-        if (lvl <= 1) {
-            System.out.println("Handling requst at poc level");
-        } else {
-            next.handleRequest(lvl);
-        }
+        throw new UnsupportedOperationException("TODO: implement handleRequest() for PointOfContact");
     }
 }
 
 class Superviser extends Support {
+    // TODO: handle requests with lvl < 4 here, otherwise pass the request to next
     @Override
     void handleRequest(int lvl) {
-        if (lvl < 4) {
-            System.out.println("Handling requst at superviser level");
-        } else {
-            next.handleRequest(lvl);
-        }
+        throw new UnsupportedOperationException("TODO: implement handleRequest() for Superviser");
     }
 }
 
 class Manager extends Support {
+    // TODO: handle requests with lvl < 10 here, otherwise escalate (end of chain)
     @Override
     void handleRequest(int lvl) {
-        if (lvl < 10) {
-            System.out.println("Handling requst at manager level");
-        } else {
-            System.out.println("Request needs to be excalated on mail");
-        }
+        throw new UnsupportedOperationException("TODO: implement handleRequest() for Manager");
     }
 }
 
@@ -67,3 +58,34 @@ public class ChainOfResponsibilty {
         basic.handleRequest(14);
     }
 }
+
+/*
+ * SOLUTIONS (reference only - try to implement it yourself first)
+ *
+ * // PointOfContact
+ * public void handleRequest(int lvl) {
+ *     if (lvl <= 1) {
+ *         System.out.println("Handling requst at poc level");
+ *     } else {
+ *         next.handleRequest(lvl);
+ *     }
+ * }
+ *
+ * // Superviser
+ * void handleRequest(int lvl) {
+ *     if (lvl < 4) {
+ *         System.out.println("Handling requst at superviser level");
+ *     } else {
+ *         next.handleRequest(lvl);
+ *     }
+ * }
+ *
+ * // Manager
+ * void handleRequest(int lvl) {
+ *     if (lvl < 10) {
+ *         System.out.println("Handling requst at manager level");
+ *     } else {
+ *         System.out.println("Request needs to be excalated on mail");
+ *     }
+ * }
+ */

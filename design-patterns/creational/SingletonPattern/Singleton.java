@@ -9,14 +9,8 @@ public class Singleton {
     }
 
     public static Singleton getInstance() {
-        if (instance == null) {
-            synchronized (Singleton.class) {
-                if (instance == null) {
-                    instance = new Singleton();
-                }
-            }
-        }
-        return instance;
+        // TODO: make this thread-safe and always return the same shared instance
+        throw new UnsupportedOperationException("TODO: implement thread-safe getInstance()");
     }
 
     int val;
@@ -32,3 +26,18 @@ public class Singleton {
     }
 
 }
+
+/*
+ * SOLUTIONS (reference only - try to implement it yourself first)
+ *
+ * public static Singleton getInstance() {
+ *     if (instance == null) {
+ *         synchronized (Singleton.class) {
+ *             if (instance == null) {
+ *                 instance = new Singleton();
+ *             }
+ *         }
+ *     }
+ *     return instance;
+ * }
+ */

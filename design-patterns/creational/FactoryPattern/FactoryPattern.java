@@ -22,19 +22,8 @@ class Rectangle implements Shape {
 
 class ShapeFactory {
     public Shape getShape(String shapeType) {
-        if (shapeType == null) {
-            return null;
-        }
-        switch (shapeType.toUpperCase()) {
-            case "CIRCLE":
-                return new Circle();
-            case "SQUARE":
-                return new Square();
-            case "RECTANGLE":
-                return new Rectangle();
-            default:
-                return null;
-        }
+        // TODO: return the right Shape instance for "CIRCLE"/"SQUARE"/"RECTANGLE" (or null otherwise)
+        throw new UnsupportedOperationException("TODO: implement getShape()");
     }
 }
 
@@ -53,3 +42,23 @@ public class FactoryPattern {
         rectangle.draw();
     }
 }
+
+/*
+ * SOLUTIONS (reference only - try to implement it yourself first)
+ *
+ * public Shape getShape(String shapeType) {
+ *     if (shapeType == null) {
+ *         return null;
+ *     }
+ *     switch (shapeType.toUpperCase()) {
+ *         case "CIRCLE":
+ *             return new Circle();
+ *         case "SQUARE":
+ *             return new Square();
+ *         case "RECTANGLE":
+ *             return new Rectangle();
+ *         default:
+ *             return null;
+ *     }
+ * }
+ */

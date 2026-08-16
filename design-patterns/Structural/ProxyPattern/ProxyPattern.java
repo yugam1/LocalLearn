@@ -27,10 +27,9 @@ class ProxyImage implements Image {
         this.fileName = fileName;
     }
 
+    // TODO: lazily create the RealImage on first call, then delegate display() to it
     public void display() {
-        if (realImage == null)
-            realImage = new RealImage(fileName); // Lazy loading
-        realImage.display();
+        throw new UnsupportedOperationException("TODO: implement display()");
     }
 }
 
@@ -42,3 +41,13 @@ public class ProxyPattern {
         image.display(); // Uses cached instance
     }
 }
+
+/*
+ * SOLUTIONS (reference only - try to implement it yourself first)
+ *
+ * public void display() {
+ *     if (realImage == null)
+ *         realImage = new RealImage(fileName);
+ *     realImage.display();
+ * }
+ */

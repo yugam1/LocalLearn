@@ -28,11 +28,9 @@ class Folder implements FileSystemComponent {
         components.add(component);
     }
 
+    // TODO: print this folder's name, then recursively show details of every child component
     public void showDetails() {
-        System.out.println("Folder: " + name);
-        for (FileSystemComponent c : components) {
-            c.showDetails();
-        }
+        throw new UnsupportedOperationException("TODO: implement showDetails()");
     }
 }
 
@@ -47,3 +45,14 @@ public class CompositePattern {
         folder.showDetails();
     }
 }
+
+/*
+ * SOLUTIONS (reference only - try to implement it yourself first)
+ *
+ * public void showDetails() {
+ *     System.out.println("Folder: " + name);
+ *     for (FileSystemComponent c : components) {
+ *         c.showDetails();
+ *     }
+ * }
+ */

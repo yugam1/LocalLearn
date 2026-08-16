@@ -22,23 +22,22 @@ class Employee {
         private int age;
         private String department;
 
+        // TODO: implement name/age/department as fluent setters that return this builder
         public EmployeeBuilder name(String name) {
-            this.name = name;
-            return this;
+            throw new UnsupportedOperationException("TODO: implement fluent setter for name");
         }
 
         public EmployeeBuilder age(int age) {
-            this.age = age;
-            return this;
+            throw new UnsupportedOperationException("TODO: implement fluent setter for age");
         }
 
         public EmployeeBuilder department(String department) {
-            this.department = department;
-            return this;
+            throw new UnsupportedOperationException("TODO: implement fluent setter for department");
         }
 
+        // TODO: implement build() to construct an Employee from this builder's fields
         public Employee build() {
-            return new Employee(this);
+            throw new UnsupportedOperationException("TODO: implement build()");
         }
     }
 }
@@ -55,3 +54,26 @@ public class BuilderPattern {
         System.out.println(employee);
     }
 }
+
+/*
+ * SOLUTIONS (reference only - try to implement it yourself first)
+ *
+ * public EmployeeBuilder name(String name) {
+ *     this.name = name;
+ *     return this;
+ * }
+ *
+ * public EmployeeBuilder age(int age) {
+ *     this.age = age;
+ *     return this;
+ * }
+ *
+ * public EmployeeBuilder department(String department) {
+ *     this.department = department;
+ *     return this;
+ * }
+ *
+ * public Employee build() {
+ *     return new Employee(this);
+ * }
+ */

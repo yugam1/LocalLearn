@@ -32,12 +32,10 @@ class YoutubeChannel implements Subject {
 
     }
 
+    // TODO: notify every registered observer that a video was added
     @Override
     public void notifyOBservers() {
-        for (Observer o : subscribers) {
-            o.update("Video Added " + name);
-        }
-
+        throw new UnsupportedOperationException("TODO: implement notifyOBservers()");
     }
 }
 
@@ -61,3 +59,13 @@ public class ObserverPattern {
         mychannel.notifyOBservers();
     }
 }
+
+/*
+ * SOLUTIONS (reference only - try to implement it yourself first)
+ *
+ * public void notifyOBservers() {
+ *     for (Observer o : subscribers) {
+ *         o.update("Video Added " + name);
+ *     }
+ * }
+ */
