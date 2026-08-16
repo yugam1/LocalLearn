@@ -1,5 +1,3 @@
-package Fraud2;
-
 import java.util.*;
 
 // ============= PROBLEM DESCRIPTION =============

@@ -1,5 +1,3 @@
-package Structural;
-
 public class DecoratorPattern {
     public static void main(String[] args) {
         Coffee coffee = new SugarDecorator(new MilkDecorator(new BasicCoffee()));

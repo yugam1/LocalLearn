@@ -1,5 +1,3 @@
-package Behavioral;
-
 abstract class Support {
     Support next;
 

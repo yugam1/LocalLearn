@@ -1,5 +1,3 @@
-package HTTPRequest;
-
 // ============= PROBLEM DESCRIPTION =============
 /*
 HTTP REQUEST REDIRECTION (Amazon HackerRank)

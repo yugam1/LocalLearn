@@ -1,7 +1,5 @@
 // Complete, self-contained Java code (no Lombok) demonstrating core logic.
 
-package BMS;
-
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.*;

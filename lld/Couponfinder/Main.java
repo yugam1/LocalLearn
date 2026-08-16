@@ -1,5 +1,3 @@
-package Couponfinder;
-
 import java.util.*;
 
 // Data structures for Coupon and Category

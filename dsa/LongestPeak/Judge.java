@@ -1,5 +1,3 @@
-package LongestPeak;
-
 import java.util.*;
 
 // ============= PROBLEM DESCRIPTION =============

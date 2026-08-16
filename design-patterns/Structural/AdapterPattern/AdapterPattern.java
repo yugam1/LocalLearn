@@ -1,5 +1,3 @@
-package Structural;
-
 class OldPaymentProcessor {
     void makePayment(double amount) {
         System.out.println("Processing payment via Old Gateway: " + amount);

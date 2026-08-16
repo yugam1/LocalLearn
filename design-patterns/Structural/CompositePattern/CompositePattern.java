@@ -1,5 +1,3 @@
-package Structural;
-
 import java.util.*;
 
 interface FileSystemComponent {

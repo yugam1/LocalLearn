@@ -1,5 +1,3 @@
-package Atlas;
-
 import java.util.*;
 
 // ============= PROBLEM DESCRIPTION =============

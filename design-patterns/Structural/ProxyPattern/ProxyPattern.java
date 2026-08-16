@@ -1,5 +1,3 @@
-package Structural;
-
 interface Image {
     void display();
 }

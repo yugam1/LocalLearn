@@ -1,5 +1,3 @@
-package Try2;
-
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;

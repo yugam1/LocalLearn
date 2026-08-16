@@ -1,5 +1,3 @@
-package CardObsfucation;
-
 import java.util.*;
 
 // ============= PROBLEM DESCRIPTION =============

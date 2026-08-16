@@ -1,5 +1,3 @@
-package StringMani;
-
 import java.util.*;
 
 public class BraceExpansionTest {

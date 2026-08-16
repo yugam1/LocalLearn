@@ -1,5 +1,3 @@
-package SmallestProblem;
-
 import java.util.*;
 
 // ============= PROBLEM DESCRIPTION =============

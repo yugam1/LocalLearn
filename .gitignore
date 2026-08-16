@@ -16,6 +16,9 @@ node_modules/
 dist/
 build/
 
+# Compiled Java
+*.class
+
 # Coverage / test output
 coverage/
 

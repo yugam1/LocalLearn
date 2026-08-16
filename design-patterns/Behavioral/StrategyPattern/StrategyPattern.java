@@ -1,5 +1,3 @@
-package Behavioral;
-
 interface PaymentStrategy {
     void pay(int amount);
 }

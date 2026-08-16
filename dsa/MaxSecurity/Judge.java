@@ -1,5 +1,3 @@
-package MaxSecurity;
-
 import java.util.*;
 
 // ============= PROBLEM DESCRIPTION =============

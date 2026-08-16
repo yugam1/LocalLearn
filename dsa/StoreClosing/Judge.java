@@ -1,5 +1,3 @@
-package StoreClosing;
-
 import java.util.*;
 
 // ============= PROBLEM DESCRIPTION =============

@@ -1,5 +1,3 @@
-package Hotel1;
-
 import java.util.*;
 
 // ---------------------------

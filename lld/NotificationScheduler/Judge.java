@@ -1,5 +1,3 @@
-package NotificationScheduler;
-
 import java.util.*;
 import java.util.stream.*;
 

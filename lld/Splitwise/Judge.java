@@ -1,5 +1,3 @@
-package Splitwise;
-
 import java.util.*;
 
 // ============= PROBLEM DESCRIPTION =============

@@ -1,5 +1,3 @@
-package Coupontest3;
-
 import java.util.*;
 import java.time.*;
 

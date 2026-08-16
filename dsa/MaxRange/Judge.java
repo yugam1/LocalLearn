@@ -1,5 +1,3 @@
-package MaxRange;
-
 import java.util.*;
 
 // ============= PROBLEM DESCRIPTION =============

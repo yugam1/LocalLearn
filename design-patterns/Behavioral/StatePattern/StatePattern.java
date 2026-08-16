@@ -1,5 +1,3 @@
-package Behavioral;
-
 import lombok.Data;
 
 interface VMState {
