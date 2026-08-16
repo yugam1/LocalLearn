@@ -1,5 +1,3 @@
-package creational;
-
 import lombok.Data;
 
 @Data
