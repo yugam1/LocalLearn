@@ -1,0 +1,23 @@
+{
+  "name": "day1-foundations",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev-start": "nodemon --inspect day2-server.js",
+    "test": "node src/test-helperModule.js",
+    "example": "node src/example-usage.js",
+    "start": "node src/example-usage.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.13.2",
+    "axios-retry": "^4.5.0",
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "opossum": "^9.0.0",
+    "stripe": "^20.0.0"
+  }
+}
