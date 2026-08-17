@@ -18,7 +18,13 @@ Modules (split by FEATURE so you can review one concern at a time):
     chunking    Document / Chunk / Chunker / load_documents
     vectorstore VectorStore (Qdrant wrapper; embedder injected)
     generation  format_context + generate (grounded answer with citations)
-    prompts     GROUNDED_SYSTEM / NAIVE_SYSTEM
+    prompts     GROUNDED_SYSTEM / NAIVE_SYSTEM / SALES_SYSTEM
     display     banner / show_retrieval / show_chunks / print_answer
     runlog      Tee / tee_stdout (self-logging to result/)
+    bm25        BM25Index / tokenize (hand-rolled lexical scoring)
+    retrievers  Hit / VectorRetriever / BM25Retriever / HybridRetriever / RerankRetriever
+    evaluation  GoldQuery / evaluate / sanity_check_gold (retrieval-level: did the
+                right CHUNK reach top-k?)
+    judging     AnswerGoldQuery / evaluate_pipeline / llm_judge / sanity_check_judge
+                (answer-level: did the GENERATED ANSWER get it right?)
 """

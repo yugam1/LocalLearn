@@ -38,8 +38,8 @@ Code + Claude Code = **Mac only** (the plan). ASUS is headless infra.
 
 ## Status
 
-**Current day:** Day 6 **done and written up** — the run's headline is a negative result: the vector baseline was **already at Recall@4 = 1.00**, so hybrid bought nothing measurable (+0.008 MRR, two wins two losses) and the reranker bought +0.117 MRR for **205× latency**. Day 7 (eval harness, LLM-as-judge) not started.
-**Last updated:** 2026-08-09
+**Current day:** Day 6 done and written up (also rewritten as a teacher-narration transcript, see below). **Day 7 (answer-level eval harness, LLM-as-judge) scaffolded, not yet run.**
+**Last updated:** 2026-08-16
 
 ### Week 1 checklist
 - [x] **Day 1** — Ollama up; talk to API; observe tokens/context; break context window; write `notes/day1.md`
@@ -48,11 +48,50 @@ Code + Claude Code = **Mac only** (the plan). ASUS is headless infra.
 - [x] **Day 4** — full RAG pipeline (ingest → chunk → embed → store → retrieve → answer w/ citations); happy-path + out-of-corpus grounding test both run
 - [x] **Day 5** — break RAG 4 ways: chunking / retrieval / hallucination / stale index — run + notes filled
 - [x] **Day 6** — improve retrieval (hybrid BM25+vector, reranker); measured — and the measurement said the "improvement" was a no-op on this corpus
-- [ ] **Day 7** — eval harness: 20-Q gold set, exact-match + LLM-as-judge, produce a %
+- [ ] **Day 7** — eval harness: 20-Q gold set, exact-match + LLM-as-judge, produce a % (scaffolded, not run)
 
 ---
 
 ## Log (newest first)
+
+### 2026-08-16 — Day 6 notes rewritten as a teacher-transcript; Day 7 scaffolded (answer-level eval)
+
+- **`notes/day6.md` rewritten**, at the user's request, as a narrated "explain it to a
+  teenager" class transcript — same real numbers/findings as the original write-up
+  (nothing fabricated), reframed with analogies + toy code (naive cosine, hand-rolled
+  BM25 idea, RRF fusion, Recall/MRR) grounded in the real formulas from `bm25.py` /
+  `retrievers.py` / `evaluation.py`. Established as the house style going forward for
+  day notes; original structured/interview-bank content preserved inside it (answer
+  bank, ship verdict, forward link), just narrated.
+- **Day 7 scaffolded**, same transcript pattern, but split into two files per the
+  user's request — a **pre-run** file (concepts only, zero results, ends with a
+  predictions checklist) and a **post-run** file (blanks-only template, filled after
+  the real run) — so results can't be skimmed to before the concepts land.
+  - New package module **`locallearn/judging.py`**: `AnswerGoldQuery` / `JudgeVerdict`
+    / `AnswerResult` / `PipelineRun`, `exact_match` (cheap substring check, now
+    against GENERATED answer text instead of verbatim chunk text — the whole reason
+    it's expected to be brittle here in a way Day 6's version wasn't), `llm_judge`
+    (PASS/FAIL + reason, temp 0, defensively parsed), and — the new idea for this
+    day — `sanity_check_judge()` + `judge_self_consistency()`: the judge itself gets
+    tested (known-good vs known-bad answer discrimination, and repeat-call stability)
+    BEFORE any of its verdicts are trusted, mirroring Day 6's `sanity_check_gold()`
+    one layer up the stack.
+  - New script **`scripts/day7_eval_answers.py`**: 20-question answer-level gold set
+    over the same Beacon corpus/chunker knobs as Days 4-6. Compares two pipelines that
+    differ in exactly one knob (`k`): `baseline` (k=4, Day 4's known-good config) vs
+    `degraded` (k=1, Day 5 Break #2's config) — reruns that break as a real 20-question
+    measurement instead of the original one-off anecdote. Each gold query carries a
+    written-down `needs_chunks` prediction (1 or 2) for whether k=1 should break it,
+    plus a few deliberately "fragile" exact-match cases (e.g. source says "1h", model
+    likely says "one hour") to demonstrate exact-match vs judge disagreement live, and
+    the Day 4/5 out-of-corpus Salesforce canary as `expects_refusal=True`.
+  - Not run yet — `notes/day7_pre.md` has a predictions checklist to fill in first
+    (per project convention: predict before running), then run the script against the
+    ASUS, then fill `notes/day7_post.md` from the real `result/day7.txt` output.
+- **Next:** user runs `python scripts/day7_eval_answers.py` against the ASUS, fills
+  `notes/day7_post.md` from the real output, and we check whether the predictions
+  (judge sanity/consistency, which `needs_chunks=2` questions actually broke under
+  k=1, where exact-match and the judge disagreed) held.
 
 ### 2026-08-09 — Day 6 run: the improvement didn't improve anything (and that's the result)
 

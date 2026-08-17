@@ -1,65 +1,351 @@
-# Day 6 notes — make retrieval better, and prove it
+# Day 6 — the class transcript (explain it to a 15-year-old, keep the numbers real)
 
-> Goal: Day 5 Break #2 showed retrieval silently handing over half an answer.
-> Today I fix that stage — hybrid (BM25 + vector) and a reranker — and the fix is
-> the easy half. The half that counts is the sentence at the end:
-> **"Recall@4 went 1.00 → 1.00 and p50 latency went 83.5ms → 74.5ms."**
-> Which is the most useful sentence I could have gotten, because it says the
-> improvement I built **bought nothing measurable**. The baseline was already at
-> the ceiling. Details below — the whole day is about what you do with that.
-
-## Setup / how I ran it
-- [x] `python scripts/day6_better_retrieval.py` (single run, self-logs to `result/day6.txt`).
-- Held FIXED so the retriever is the only variable: 120-word / 25-overlap chunks, `k=4`, `nomic-embed-text` 768-D, `llama3.1:8b`, Qdrant collection `day6_hybrid`. Both indexes get the **same chunk objects**.
-- Four retrievers: `vector` (Day 4/5 baseline) · `bm25` (hand-rolled) · `hybrid` (RRF fusion) · `rerank` (hybrid over-fetches 6, LLM re-scores each).
-- Metric is **retrieval-level**, not answer-level: *did the chunk containing the answer reach top-k?* Answer grading needs an LLM judge — that's Day 7. Retrieval recall is the **ceiling** on everything downstream.
-
-## Why hybrid should work at all (the argument, before the numbers)
-The two arms fail on **different** queries — their errors are uncorrelated:
-- **Vector** compresses meaning into 768 floats. What it destroys first is rare literal tokens: a hostname or a serial format embeds as "identifier-ish", so two unrelated identifiers land next to each other.
-- **BM25** counts words and knows nothing about meaning. It nails the literal token and is helpless against a paraphrase that shares no vocabulary.
-
-Fusing them is worth it *only* if that's actually true on my corpus — which is what the `expects` column tests. **I wrote the prediction down per query before running, so the run is allowed to prove me wrong.**
-
-## The gold set (10 queries, substring-graded)
-`must_contain` is a literal phrase the correct chunk provably has, so grading needs no LLM and no judgement call. Substrings rather than chunk ids **on purpose** — chunk indices shift whenever the chunker knobs move, which would silently invalidate the gold set.
-
-### The eval harness had a bug before it had a result
-Found while building it, and it's the most transferable thing in the day: my first draft graded the "silent >2h" query on the substring `"30 seconds"`. That phrase appears in **two** places — the power-cycle fix *and* `overview.md`'s "reports a GPS ping every 30 seconds". A retriever fetching an entirely unrelated chunk would have been scored **correct**.
-
-So `sanity_check_gold()` now runs before any measurement and hard-fails on two things:
-- **UNWINNABLE** — phrase in no chunk. Drags every arm down equally, so the *comparison* still looks sane while the absolute numbers are garbage. That's what makes it dangerous.
-- **AMBIGUOUS** — phrase spans multiple source docs, so a wrong chunk can score right. Must be acknowledged with `ambiguous_ok=True` (only `"idle threshold"` legitimately is — both docs answer it).
-
-> **An eval harness is code, and code has bugs. An unchecked gold set reports three digits of precision about nothing.** First question to ask of any eval you're handed: *does it test itself?*
+> Format note: this is Day 6's actual findings, rewritten as if I were teaching
+> them out loud to someone who's never heard the word "embedding." Every number
+> below is the real result from `python scripts/day6_better_retrieval.py`
+> (self-logged to `result/day6.txt`) — nothing here is made up to make the story
+> nicer. The toy code blocks are simplified stand-ins for teaching, not the real
+> script; the real implementation is `scripts/locallearn/bm25.py`,
+> `retrievers.py`, and `evaluation.py`.
 
 ---
 
-## Results
+## Chapter 1 — Why "search" is secretly the whole ballgame
 
-### The money table
-10 gold queries, k=4, `llama3.1:8b` + `nomic-embed-text` on the ASUS over the LAN.
+Okay. Picture an open-book exam. You get to bring one giant binder of notes in
+with you. Here's the catch: you don't get to read the whole binder during the
+test. You get 10 seconds to flip to **one page**, and whatever's on that page
+is all you're allowed to use to answer the question.
 
-| retriever | Recall@4 | MRR | p50 ms | p95 ms | vs baseline |
-|---|---|---|---|---|---|
-| vector (baseline) | **1.00** | **0.817** | **83.5** | **190.2** | — |
-| bm25 | **0.80** | **0.683** | **0.1** | **0.1** | MRR −0.133, ~0× latency |
-| hybrid | **1.00** | **0.825** | **74.5** | **261.2** | MRR **+0.008**, 0.9× latency |
-| rerank | **1.00** | **0.933** | **17098.9** | **19069.6** | MRR **+0.117**, **204.9×** latency |
+If you flip to the wrong page, it doesn't matter how smart you are or how good
+your handwriting is — you're going to get the question wrong, because the right
+information was never in front of you.
 
-**The headline is the first column: baseline recall was already 1.00.** Every
-correct chunk was already inside the top 4 before I wrote a line of BM25. So
-there was no recall to buy, and the entire experiment collapses into a *ranking*
-question — which is exactly what MRR is for, and exactly why a one-metric table
-would have told me nothing.
+That's a RAG system (Retrieval-Augmented Generation, but forget the acronym).
+The AI model is you, taking the exam. The "flip to one page" step is called
+**retrieval**. Everything people obsess over — prompt engineering, which model
+you use, temperature settings — all of that happens *after* the page-flip. If
+the page-flip is wrong, none of it can save you.
 
-Consequence worth internalising: **I built the wrong fix for this corpus.** Day 5
-Break #2 wasn't a retrieval-quality bug at all, it was a `k` bug — k=1 on a
-two-chunk answer. Hybrid search doesn't fix that; `k=4` already did.
+So Day 6's entire job was: **make the page-flip better, and prove — with a
+number, not a feeling — whether it actually got better.**
 
-### Recall@k depends entirely on k — and the winner flips
-Recomputed from the per-query rank table (arithmetic on the real output, not a
-second run):
+Spoiler, because it's the most important sentence in this whole lesson: I built
+a fancier page-flipping system, ran the numbers, and it turned out **the
+original page-flipping system was already flipping to the right page 100% of
+the time.** I built a fix for a problem that didn't exist on this test. That's
+not a failure — that's the entire point of measuring things instead of guessing.
+Hold that thought; we'll come back to it with the actual numbers.
+
+---
+
+## Chapter 2 — Two totally different ways to "search"
+
+There are two fundamentally different tricks for finding the right page in the
+binder. They're bad at *opposite* things, which turns out to matter a lot.
+
+### Trick 1: search by meaning ("vector" / "embedding" search)
+
+Imagine you could take any sentence and turn it into a **point on a map**, where
+sentences that *mean* similar things land near each other, even if they don't
+share a single word. "My car won't start" and "the vehicle refuses to turn
+over" would land right next to each other on this map, despite having zero
+words in common.
+
+That map has hundreds of dimensions instead of 2 (x, y), but the idea is
+identical to a 2D map: **distance = how different the meaning is.** We call a
+point on this map an "embedding," and "how close are two points" is measured
+with something called cosine similarity — don't worry about the name, just
+know it's a distance score between 0 and 1.
+
+```python
+# TOY version — not the real code, just the idea.
+# Pretend an embedding is just 3 numbers instead of 768.
+import math
+
+def cosine(a, b):
+    dot = sum(x * y for x, y in zip(a, b))
+    mag_a = math.sqrt(sum(x * x for x in a))
+    mag_b = math.sqrt(sum(y * y for y in b))
+    return dot / (mag_a * mag_b)
+
+car_wont_start   = [0.9, 0.1, 0.4]   # made-up coordinates
+vehicle_no_crank = [0.85, 0.15, 0.35]  # a paraphrase — lands NEARBY
+pizza_recipe     = [0.1, 0.9, 0.2]   # unrelated — lands FAR
+
+print(cosine(car_wont_start, vehicle_no_crank))  # close to 1.0 — similar!
+print(cosine(car_wont_start, pizza_recipe))      # close to 0.0 — unrelated
+```
+
+This is *incredible* at paraphrases. Ask "why does my van keep beeping at me"
+and it'll find a chunk that says "the alert triggers when idle time exceeds
+the threshold" even though not one word matches.
+
+**But here's its blind spot, and it's the whole reason Day 6 exists:**
+squeezing a sentence down into a handful of "meaning coordinates" throws
+information away, and the first thing it throws away is anything that doesn't
+*have* meaning — like a serial number, a hostname, or an error code. To this
+kind of search, `BT-4471829` and `BT-9982104` both just smell like
+"identifier-ish." It genuinely cannot tell them apart very well, because
+neither of them *means* anything — they're just codes.
+
+Real number from my run: I asked *"What URL is the Beacon web console at?"*
+The correct chunk (containing `console.beacon.aldritch.example`) got buried at
+**rank 3**. The embedding search *knew* the question was about a URL and a
+console, but it couldn't grab onto the actual hostname text, because a
+hostname doesn't "mean" anything to a meaning-based map.
+
+### Trick 2: search by exact words (BM25 / keyword search)
+
+This is the boring, old-school approach, and it's the opposite of trick 1 in
+every way. It doesn't understand meaning *at all*. It just counts words. Think
+of the index at the back of a textbook: "photosynthesis .......... page 142."
+It doesn't know what photosynthesis *means* — it just knows that word appears
+on that page, and it'll take you straight there if you type that exact word.
+
+The real formula (called BM25) looks scarier than it is. It's three ideas
+stacked on top of each other:
+
+1. **Rare words matter more.** If the word "the" is in every single page, it
+   tells you nothing — everyone has it. If the word "OBD" is in exactly one
+   page, and your question has the word "OBD" in it, that's basically a
+   smoking gun. This is called **IDF** (inverse document frequency) — rarity
+   is a signal.
+2. **Diminishing returns.** A page that says "van van van van van" 50 times
+   isn't necessarily 50x more about vans than a page that says it twice. BM25
+   has a curve built in so the 10th repeat of a word barely counts for
+   anything more than the 9th did — otherwise a spammy page could win just by
+   repetition.
+3. **Long pages get a penalty.** A page that's 10x longer has 10x more chances
+   to accidentally contain your search word. BM25 discounts for that so a
+   giant page doesn't win purely by being giant.
+
+```python
+# TOY version of the idea — score = how "IDF-heavy" the shared words are.
+# Pretend a "page" is just a string, and a query is just a string.
+def toy_score(query_words, page_words, rare_words):
+    score = 0
+    for w in query_words:
+        if w in page_words:
+            score += rare_words.get(w, 1)   # rare words score higher
+    return score
+
+pages = {
+    "page_A": "the fleet console lives at console.beacon.aldritch.example",
+    "page_B": "your van reports a GPS ping every 30 seconds",
+}
+rarity = {"console.beacon.aldritch.example": 9, "the": 0.1, "fleet": 2}
+
+query = ["what", "url", "is", "the", "console", "at"]
+# ^ notice "console.beacon.aldritch.example" isn't even a literal match to
+# "console" alone in real BM25 — this toy is simplified on purpose.
+```
+
+Real number from my run: for that exact URL question, BM25 found the right
+chunk at **rank 1**, and it took **0.1 milliseconds** — no AI model, no GPU, no
+network call. It's just counting.
+
+BM25's weakness is the mirror image of the embedding search's weakness: it is
+**completely helpless against a paraphrase**. If your question shares zero
+words with the answer, BM25 has literally nothing to grab onto. It's not
+"less good" at that — it returns nothing at all, honestly, like a shrug.
+
+### The key insight that makes Chapter 3 make sense
+
+**These two tricks fail on *different* questions.** Vector search fails on
+literal identifiers. Keyword search fails on paraphrases. If their mistakes
+were the same mistakes, combining them would be pointless — you'd just get the
+same wrong answer twice. But because their errors are *uncorrelated*, there's
+a real, argued-for reason to try combining them. Not because "more is better"
+— because they're bad at genuinely different things.
+
+I wrote this prediction down for each of my 10 test questions *before* running
+anything — which one I expected to win and why. That mattered a lot later.
+Keep reading.
+
+---
+
+## Chapter 3 — Fusing two flawed friends (hybrid search)
+
+Say you have two friends helping you find something. Friend A is great with
+names and numbers but terrible with vague descriptions. Friend B is the
+opposite — great at "vibes," bad with exact details. How do you combine their
+opinions into one answer?
+
+The naive idea: average their confidence scores. The problem: Friend A's
+"confidence" is measured in a totally different unit than Friend B's. It's
+like averaging a temperature in Celsius with a temperature in Fahrenheit and
+expecting a sane number — the scales don't line up, and if you tried to
+convert them, the conversion itself would keep sliding around depending on the
+question. (In real terms: cosine scores live in a tight ~0.5–0.75 band, BM25
+scores are unbounded and jump around 0–15+. You can't just add them.)
+
+The trick that dodges this — called **Reciprocal Rank Fusion (RRF)** — throws
+away the actual *scores* and only keeps the **ranking**. Not "how confident,"
+just "1st place, 2nd place, 3rd place." Then it gives points based on position,
+with a twist: it heavily favors things that show up high on *both* friends'
+lists over things that show up #1 on just one list.
+
+```python
+# TOY RRF — exactly the real formula, simplified inputs.
+def rrf_fuse(rank_lists, k_rrf=60):
+    scores = {}
+    for ranking in rank_lists:            # one ranking per "friend"/retriever
+        for rank, item in enumerate(ranking, start=1):
+            scores[item] = scores.get(item, 0) + 1 / (k_rrf + rank)
+    return sorted(scores.items(), key=lambda kv: -kv[1])
+
+vector_ranking = ["chunkA", "chunkC", "chunkB"]   # friend A's order
+bm25_ranking   = ["chunkB", "chunkA", "chunkC"]   # friend B's order
+
+print(rrf_fuse([vector_ranking, bm25_ranking]))
+# chunkA shows up 1st and 2nd -> wins, even though neither friend
+# put it in first place on its own in a way that dominates.
+```
+
+The `60` isn't magic, it's just a number from an old research paper (TREC)
+whose whole job is to flatten out the difference between "ranked 1st" and
+"ranked 2nd" a little, so one overconfident friend can't just steamroll the
+vote.
+
+**Here's the twist my run taught me, and it's the kind of thing you only learn
+by measuring, not by reasoning about it on a whiteboard:** because RRF only
+cares about *agreement*, it can actively make things worse. If Friend A is
+right and Friend B is confidently, plausibly, *totally wrong* about a specific
+question, RRF doesn't know that. It just sees two votes and averages the
+positions. On my run, this happened **twice** — a query where the vector
+search alone had the right answer at rank 1 dropped to rank 2 once BM25's
+confident-but-wrong guess got folded in. Fusing a right friend with a wrong
+friend can drag the right one down. That's the price of the trick that makes
+RRF simple in the first place: by throwing away confidence/magnitude to dodge
+the unit-mismatch problem, you also throw away the information that would
+have told you *which friend to trust this time.*
+
+Overall hybrid result on my 10-question test: **Recall@4 stayed 1.00 → 1.00**
+(no change — both were already perfect), and the ranking-quality score (MRR,
+explained in Chapter 5) moved from **0.817 to 0.825** — a nudge so small it's
+inside the noise of the measurement itself. Two questions got better, two got
+worse. Net: a wash.
+
+---
+
+## Chapter 4 — Hiring an expert judge (reranking)
+
+Now imagine a totally different strategy. Instead of trying to get the *first*
+search exactly right, you deliberately cast a wide net — grab, say, 6 decent
+candidates instead of the top 4 — and then hand those 6 to an expert judge who
+reads each one carefully and re-orders them by hand.
+
+That's **reranking**. Stage 1 (vector + BM25, cheap and fast) just needs to
+make sure the right answer is *somewhere* in its net — that's a recall job.
+Stage 2 (the expert judge) only has to sort a short list — that's a precision
+job. Neither one has to be good at the other's job, which is a nice division
+of labor.
+
+In a real production system, the "judge" would be a small, specialized model
+called a **cross-encoder** — it's built for exactly one task (score how well
+passage X answers question Y) and does it in a single fast pass, in
+milliseconds, for all candidates at once.
+
+I didn't have one of those lying around, so I used the same big general-purpose
+language model I use for generating answers, and asked it — one candidate at a
+time, one at a time, sequentially — "rate 0 to 10, how well does this passage
+answer this question." That's a **pointwise LLM reranker**, and it's the slow,
+worst-case version of the idea, on purpose, so I could see exactly what it
+costs.
+
+```python
+# TOY version of what the reranker prompt does.
+SYSTEM = "Reply with ONLY an integer 0-10. 0=irrelevant, 10=perfectly answers it."
+
+def score_passage(model, question, passage):
+    reply = model.chat(SYSTEM, f"Q: {question}\nPassage: {passage}\nScore:")
+    digits = "".join(c if c.isdigit() else " " for c in reply).split()
+    return float(digits[0]) if digits else 0.0   # never trust "reply with ONLY X"
+
+# Real code note: never trust an LLM to actually obey "reply with ONLY an
+# integer." It's a request, not a rule. Always parse defensively.
+```
+
+Here's what it bought, and what it cost, in real numbers:
+
+- It moved the ranking-quality score from 0.825 (hybrid) up to **0.933** — the
+  best result of the whole day. It took 8-of-10 questions being answered
+  correctly-at-first-try up to 9-of-10.
+- It cost **17.1 seconds per question**, versus 83.5 *milliseconds* for the
+  original plain search. That's **205 times slower.**
+
+Think about that gap for a second: 205x isn't "a bit slower," it's the
+difference between a chat app that feels instant and one where you'd assume
+it's broken and refresh the page.
+
+And here's the sharpest lesson buried in that: **a judge can only re-rank the
+candidates that were actually handed to them.** One question — "my van's
+tracker stopped showing up" — never got fixed by the reranker, because the
+first-stage search had already buried the correct chunk down at rank 4 out of
+6 *before the judge ever saw it.* You cannot judge a candidate you were never
+shown. The ceiling for that question was set before the expert judge even
+opened their mouth.
+
+**The honest headline is not "reranking is slow."** It's "*pointwise LLM
+reranking, on a small GPU that has to share memory with the CPU, is 205x
+slower.*" A real cross-encoder does the same comparison job in one small batch
+pass and would cost tens of milliseconds, not 17 seconds. Blaming "reranking"
+as a technique for a cost that's actually about *which* reranker I built would
+be the wrong lesson to walk away with.
+
+---
+
+## Chapter 5 — How do you even know if it worked? (Recall@k and MRR)
+
+You cannot just *feel* your way to "this got better." You need a number, and
+actually you need **two** numbers, because they answer two different
+questions.
+
+### Recall@k — "was the answer in the pile at all?"
+
+Out of all your test questions, what fraction had the correct page *somewhere*
+in your top-k results? This is the **ceiling** metric — if Recall@4 is 0.6,
+that means 40% of your questions are flatly unanswerable, no matter how smart
+the AI reading the pile is. No amount of clever prompting fixes a page that
+was never handed over.
+
+### MRR (Mean Reciprocal Rank) — "how close to the TOP was it?"
+
+Recall only asks yes/no. But imagine two search systems that both score
+Recall@4 = 1.00 — meaning both *always* find the right page somewhere in the
+top 4. One of them always puts it at rank 1 (first thing you see). The other
+always buries it at rank 4 (last thing you see, right before you'd have
+trimmed it to save time/cost). Recall can't tell these two apart *at all* —
+they're tied. MRR can. It scores 1/rank per question, averaged: rank 1 scores
+1.0, rank 2 scores 0.5, rank 4 scores 0.25, a total miss scores 0.
+
+```python
+# TOY versions, exactly the real formulas, small inputs.
+def recall_at_k(ranks, total):
+    # ranks: a list like [1, 3, None, 2] — rank of the correct chunk per
+    # question, or None if it never showed up in top-k
+    found = sum(1 for r in ranks if r is not None)
+    return found / total
+
+def mrr(ranks):
+    return sum((1 / r if r else 0) for r in ranks) / len(ranks)
+
+ranks = [1, 4, 2, 1, None, 1, 3, 1, 2, 1]   # 10 questions
+print("Recall@4:", recall_at_k(ranks, 10))   # 0.9 — one miss
+print("MRR:     ", mrr(ranks))               # rewards the rank-1's heavily
+```
+
+**Why MRR matters even when Recall looks perfect:** a chunk parked at rank 4
+survives *today's* setting of k=4 just fine. But the moment someone trims k to
+3 to save money on tokens, or the question needs *two* chunks instead of one,
+that rank-4 chunk silently falls off a cliff and the system breaks with zero
+warning. MRR is the early smoke detector for a fire that Recall can't see yet.
+
+### The k trap — and the finding that flips the story depending on where you look
+
+I recomputed Recall at k=1, 2, 3, and 4 from the same run (not a new run — just
+different arithmetic on the same rankings):
 
 | retriever | R@1 | R@2 | R@3 | R@4 |
 |---|---|---|---|---|
@@ -68,192 +354,252 @@ second run):
 | hybrid | 0.70 | **0.90** | 0.90 | 1.00 |
 | rerank | **0.90** | 0.90 | 1.00 | 1.00 |
 
-At **k=2 hybrid beats vector** (0.90 vs 0.80). At **k=3 vector beats hybrid**
-(1.00 vs 0.90). At k=4 they tie. Same data, three different conclusions — so
-"Recall@k improved" is a meaningless claim without the k pinned, and quoting a
-single k that happens to flatter your change is the easiest honest-looking lie in
-retrieval work. This is the argument for MRR being in the table next to it: MRR
-integrates over all the k values at once, and it says these two are a wash
-(0.817 vs 0.825).
+Look closely: **at k=2, hybrid wins** (0.90 vs 0.80 for plain vector search).
+**At k=3, plain vector search wins** (1.00 vs 0.90 for hybrid). **At k=4, it's
+a tie.** Same exact data, three completely different "winners," depending
+purely on which k you decided to report.
 
-### Did my per-query predictions hold?
-Scoreboard: **4 of 8 falsifiable predictions confirmed, 1 outright wrong, 3
-untestable** because both arms tied at rank 1.
-
-- **`lexical` (4 queries) — only 1 of 4 confirmed.** BM25 beat vector only on
-  `"What URL is the Beacon web console at?"` (bm25 rank 1 vs vector rank 3 — the
-  hostname case, exactly as argued). The other three (`BT-XXXXXXXXX`,
-  `Fleet → Settings`, `50 fleets`) **both** arms nailed at rank 1, so the
-  prediction couldn't be tested. Why vector did fine on identifiers here:
-  **10 chunks.** There is nothing for a smeared hostname embedding to collide
-  *with*. The lexical failure mode is a function of corpus size and near-duplicate
-  density, and my corpus has neither. n=10 chunks / 10 queries can't detect the
-  effect hybrid exists for — that's a limitation of the experiment, not a result.
-- **`semantic` (4 queries) — 3 of 4 confirmed.** BM25 missed
-  `"My van's tracker stopped showing up"` entirely (MISS vs vector rank 3) and
-  came 3rd/2nd on the lunch-alert and "thinned out" queries. Dense retrieval's
-  case holds.
-- **The one I got flat wrong:** `"Can a read-only user draw zones on the map?"`
-  — tagged `semantic`, BM25 won it at rank 1. The pre-check already flagged this
-  and the run confirmed it. My guess was shared tokens; the query does share
-  `map`/`user`/`zones` surface vocabulary with `overview.md#chunk2`, so the
-  double-paraphrase (read-only→Viewer, zones→geofences) I designed the query
-  around wasn't load-bearing — the query leaked enough literal tokens to be
-  solvable lexically. **A "semantic" test query that shares content words with
-  the target isn't testing semantics.** Gold-set design bug, not a retriever result.
-- **Was hybrid ever worse than an arm? Yes, twice.**
-  - `"My van's tracker stopped showing up"` — vector **3**, bm25 **MISS**,
-    hybrid **4**. Fusing a wrong arm with a right one *demoted* the answer.
-  - `"Why do I get alerted every time my drivers pause for lunch?"` — vector
-    **1**, bm25 **3**, hybrid **2**.
-
-  Mechanism: **RRF has no notion of arm confidence.** It rewards agreement, and
-  when one arm is authoritative and the other is noise for that query, agreement
-  is the wrong signal — BM25's confident-but-irrelevant top hits earn real RRF
-  credit and push the correct chunk down. That is the price of the trick that
-  makes RRF attractive (throwing away magnitudes to dodge calibration): you also
-  throw away the information that would tell you which arm to trust here.
-  Hybrid's +0.008 MRR is 2 wins (URL 3→2, billing 2→1) minus 2 losses, i.e. noise.
-
-### What the reranker cost
-- p50 latency multiple vs. baseline: **204.9×** (83.5 ms → **17.1 seconds per query**).
-- MRR gain over hybrid: **+0.108** (0.825 → 0.933). Over vector: **+0.117**.
-- What it actually did: took 8 of 10 queries to rank 1 → **9 of 10**. It fixed
-  every query hybrid had left mis-ranked, including recovering the URL query to
-  rank 1 and un-doing hybrid's lunch-alert regression. The one it couldn't fix is
-  `"My van's tracker stopped showing up"` (still rank 3) — **and that's the
-  structural lesson: a reranker can only reorder the candidate set it was
-  handed.** Its first stage (hybrid, fetch_k=6) put that chunk low, so the LLM's
-  ceiling on that query was set before it ran.
-- **Verdict: correct result, unshippable implementation.** 17s p50 is not a
-  latency cost, it's a different product. But the number indicts my *reranker*,
-  not *reranking*: 6 sequential generate calls to an 8B model ≈ 2.8s each, on a
-  4GB-VRAM GPU that has to split an 8B model with CPU (Day 1's wall). A real
-  cross-encoder (bge-reranker-base, Cohere Rerank) scores a (query, passage) pair
-  in one small forward pass — tens of ms for all 6, and they batch. **The honest
-  claim is "pointwise LLM reranking on this rig costs 205×", not "reranking is
-  expensive."** Reporting the second would be the wrong lesson learned from a
-  right measurement.
-- **Did the LLM give lots of tied scores? Can't tell from this run** — the tables
-  print ranks, not the raw 0–10 scores, and `hit.parts["llm"]` never reaches
-  stdout. Indirect evidence says it *was* discriminating (it moved ranks on 3 of
-  10 queries and never shuffled a rank-1 away), but that's inference, not
-  measurement. **Harness gap: log the per-candidate LLM scores.** If it rates
-  everything 7, the stable sort silently degrades to first-stage order and I'd be
-  paying 17s for the identity function — and I currently have no way to see that.
-
-### Did better retrieval change the ANSWER? (Part B)
-Same query (`"Where do I change the idle threshold, and what is it by default?"`),
-same prompt, same model; only the retriever differs.
-
-- **vector answer:** *"According to [1], you can change the idle threshold in
-  Console → Fleet → Settings → Idle threshold. The default idle threshold is 10
-  minutes."*
-- **hybrid answer:** **byte-identical.**
-- **Did the metric improvement show up in user-visible output? No — and the way
-  it failed to is the finding.** The two retrievers returned *different* context:
-  they share only 2 of 4 chunks (vector: `troubleshooting#2, troubleshooting#3,
-  pricing#2, pricing#1`; hybrid: `troubleshooting#2, pricing#2, overview#0,
-  overview#2`). **3 of 4 slots changed and the answer didn't move one character**,
-  because both put the answer-bearing chunk at rank 1 and the grounded prompt
-  ignored the rest. Ranks 2–4 were ballast on this query.
-
-  So: MRR gains *below the top slot* are invisible to the user — right up until
-  someone trims k to save tokens, or the answer needs two chunks (Day 5 Break #2
-  again). MRR isn't measuring today's answer quality; it's measuring **how much
-  margin you have before a config change breaks you.** That's a real thing to
-  buy, but I should say that's what I bought rather than implying the answers got
-  better.
-
-### Two things the run taught me about my own harness
-1. **"0.9× latency" is an artifact, and my table printed it with a straight
-   face.** Hybrid p50 (74.5 ms) came out *below* vector p50 (83.5 ms) — but
-   `HybridRetriever` calls `VectorRetriever` and *then* does BM25 and fusion, so
-   it cannot physically be faster. The 9 ms gap is noise on an ~80 ms LAN
-   round-trip whose cost is dominated by the embed call to Ollama (hybrid's p95 is
-   *higher*: 261 vs 190). **A benchmark that reports a speedup the call graph
-   forbids is telling you your n is too small**, and 10 samples with no repeats is
-   too small. Fix: repeat each query several times and report a median of medians,
-   or at minimum don't print a delta narrower than the run-to-run spread.
-2. **The gold set is the experiment.** Both bugs that mattered today were in the
-   gold set, not the retrievers — the `"30 seconds"` ambiguity caught pre-run by
-   `sanity_check_gold()`, and the `semantic`-tagged query that was solvable
-   lexically, caught only by the results disagreeing with my prediction. Writing
-   the prediction down is what turned the second one from an invisible flaw into a
-   finding.
+That's the trap: "Recall@k improved!" is not a real claim unless you say
+*which* k, because the answer changes depending on where you're standing. And
+if you're the one who gets to pick which k to publish, it's incredibly easy —
+and dishonest without meaning to be — to just pick the one that flatters
+whatever you built. This is exactly why MRR sits in the same table: it
+averages over every k at once, so it can't be cherry-picked the same way, and
+it's what told me hybrid and vector were basically tied (0.817 vs 0.825)
+rather than "one obviously beats the other."
 
 ---
 
-## Answer bank
+## Chapter 6 — You have to test your test
+
+Before I trusted a single number above, I found a bug — not in the search
+systems, in **my own exam.**
+
+I had written a test question about a fix that involves power-cycling a
+device: "count to 30 seconds and plug it back in." So I graded that question
+by checking if the retrieved chunk contained the phrase `"30 seconds"`.
+
+Except — I had *also* written, in a totally different document, "the tracker
+reports a GPS ping every 30 seconds." Same three words, completely unrelated
+meaning, two different source documents.
+
+That means: if a search system fetched the *wrong* chunk — the GPS-ping one,
+nothing to do with power-cycling — my grader would have shrugged and marked it
+**correct**, because the string matched. My test would have lied to me, and it
+would have lied to me *silently* — the number would've looked totally normal,
+just wrong.
+
+So I built a check that runs *before* any actual measurement, and it looks for
+exactly two failure modes:
+
+- **UNWINNABLE** — the phrase I'm grading against doesn't exist in *any*
+  chunk. Every search system gets penalized equally for a mistake that isn't
+  theirs, which is sneaky because the *comparison* between systems still looks
+  fine even though the absolute numbers are garbage.
+- **AMBIGUOUS** — the phrase shows up in chunks from *different, unrelated*
+  source documents (like my "30 seconds" trap). A wrong answer could score as
+  right by accident.
+
+**The rule this teaches, and it applies way outside of AI:** a test is code,
+and code has bugs. A test you've never checked can report three decimal places
+of confident-looking precision about literally nothing. The first question to
+ask about any test someone hands you — a school quiz, a code test suite, a
+company's KPI dashboard — is "**does this test check itself?**"
+
+---
+
+## Chapter 7 — The actual results, and the plot twist
+
+Here's the real table from the real run — 10 test questions, k=4, on the
+actual model and hardware:
+
+| retriever | Recall@4 | MRR | p50 ms | p95 ms | vs baseline |
+|---|---|---|---|---|---|
+| vector (baseline) | **1.00** | **0.817** | **83.5** | **190.2** | — |
+| bm25 | **0.80** | **0.683** | **0.1** | **0.1** | MRR −0.133, ~0× latency |
+| hybrid | **1.00** | **0.825** | **74.5** | **261.2** | MRR **+0.008**, 0.9× latency |
+| rerank | **1.00** | **0.933** | **17098.9** | **19069.6** | MRR **+0.117**, **204.9×** latency |
+
+**Read the first column again: the baseline was already at 1.00 recall.** The
+plain, simple, Day 4/5 vector search was *already* finding the right page 10
+times out of 10, before I built a single line of the fancy stuff. There was no
+recall problem to fix. Which means the whole "let's build hybrid search to fix
+retrieval" plan was solving a problem that already didn't exist on this test
+set — the actual bug from Day 5 (a question that needed two chunks but only
+got handed one) was a **k-is-too-small bug**, not a search-quality bug. `k=4`
+already fixed it. Hybrid search, RRF, all of that machinery — it wasn't wrong
+to build, but it was aimed at the wrong target.
+
+**That "no improvement" line is the single most useful sentence to come out of
+this whole day**, because it's the sentence that stopped me from shipping code
+that adds complexity — a second search index to keep in sync with the first,
+more latency variance, more moving parts — for a benefit that doesn't exist.
+
+### Did my predictions come true?
+
+Remember, I wrote down *before running anything* which search style I expected
+to win each question. Scoreboard: **4 of 8 testable predictions confirmed, 1
+flat-out wrong, 3 untestable** because both systems tied.
+
+The one I got wrong is the most interesting: I wrote a question — "can a
+read-only user draw zones on the map?" — that I *intended* to require
+understanding a paraphrase (read-only → "Viewer" role, zones → "geofences" in
+the docs). I expected meaning-based search to win. Keyword search won instead,
+at rank 1. Turns out my question accidentally reused enough plain words
+("map", "user", "zones") that it was solvable by keyword-matching alone — my
+double-paraphrase design wasn't actually load-bearing. **That's a bug in my
+test question, not a finding about the search systems.** Writing the
+prediction down in advance is exactly what let me catch that; if I hadn't
+predicted anything, a lucky keyword win would've just looked like a normal
+result instead of a red flag.
+
+### Did the better ranking even change what the AI said out loud? (the nothingburger, but an important one)
+
+I took one question — "where do I change the idle threshold, and what is it by
+default?" — ran it through both plain search and hybrid search, same prompt,
+same model, and compared the final generated answers.
+
+**They were byte-for-byte identical.** Even though hybrid search handed the
+model a *different set of source pages* than plain search did (they only
+overlapped on 2 out of 4), the answer didn't change one character — because
+both systems happened to put the *one page that actually mattered* in the #1
+slot, and the model basically ignored the other three.
+
+The lesson: an MRR improvement *below the very top slot* can be completely
+invisible to a user, right up until the day someone trims k down to save
+money, or a question needs two pages instead of one and the "ballast" pages
+suddenly matter. MRR isn't measuring "is today's answer better" — it's
+measuring **how much safety margin you have before a future config change
+breaks you.** That's a real, worthwhile thing to have bought — I just need to
+describe it honestly as "more margin," not "better answers today."
+
+### Two things I learned about my own measuring tools, not about search
+
+1. **My table reported a physically impossible speedup, with a straight
+   face.** Hybrid search showed up as *faster* (74.5ms) than plain vector
+   search (83.5ms) — except hybrid search literally runs the vector search
+   *first*, and then does extra work on top of it. It cannot be faster. It's
+   arithmetically impossible. The "speedup" was just measurement noise — 10
+   samples with no repeats is nowhere near enough to trust a 9-millisecond
+   gap. **Rule of thumb: if your benchmark reports an improvement that the
+   actual mechanics of the system forbid, the problem is your sample size, not
+   reality.**
+2. **The test itself was where the real bugs were hiding**, not the search
+   code. Both meaningful mistakes this whole day — the "30 seconds" ambiguity
+   trap and the accidentally-not-actually-semantic test question — were bugs
+   in *my exam*, caught only because I built a sanity-checker and wrote
+   predictions down in advance. The lesson generalizes way past search: when
+   you're evaluating anything, budget real time for making sure the ruler
+   isn't bent before you trust what it measures.
+
+---
+
+## Chapter 8 — If someone asked you about this in an interview
+
+*(Written the way you'd actually say it out loud — plain words, then the
+number backing it up.)*
 
 **"You added hybrid search. How do you know it helped?"**
-**It didn't, and I can show you the number.** On a 10-query labelled gold set at
-k=4: Recall went 1.00 → 1.00, MRR 0.817 → 0.825, p50 84 ms → 75 ms (a difference
-inside my measurement noise). Hybrid won two queries and lost two — it pulled a
-hostname lookup from rank 3 to 2 and a billing question from 2 to 1, and it
-*demoted* two paraphrase queries because RRF gave the lexical arm's confident
-wrong hits real credit. The reason there was nothing to win: **my first stage was
-already at Recall@4 = 1.00**, so I'd built a recall fix for a corpus with no
-recall problem. What I'd actually ship from this is not the retriever — it's the
-harness, because it's what stopped me shipping a change that only added a code
-path. And I'd say clearly that 10 queries over 10 chunks is too small a corpus to
-detect the effect hybrid exists for; the next step is more docs and a bigger gold
-set, not more fusion.
+It didn't, and I can show you the number. On a 10-question labeled test at
+k=4: Recall stayed 1.00 → 1.00, the ranking-quality score barely moved (0.817
+→ 0.825), and latency was inside measurement noise (84ms → 75ms). It won two
+questions and lost two — pulled a hostname lookup up a rank, but also demoted
+two paraphrase questions because the fusion trick gave the wrong search
+system's confident guess real credit. The root reason there was nothing to
+win: my first-stage search was **already** finding the right page 100% of the
+time, so I built a fix for a problem this test set didn't have. What I'd
+actually claim as the win from this day isn't the retriever — it's the *test
+harness*, because that's the thing that stopped me from shipping a change that
+only adds complexity. And I'd say clearly: 10 questions over 10 pages of docs
+is too small a test to even detect the effect hybrid search is supposed to
+help with — the next step is a bigger, messier document set, not more fusion
+tricks.
 
 **"When would you NOT use a reranker?"**
-**When the first stage is already at Recall@k ≈ 1.0** — a reranker can only
-reorder chunks the model was going to read anyway. It buys precision, not recall,
-and **it cannot fix a chunk the first stage never fetched**, so if recall is the
-problem it's the wrong tool at any price. I have both halves of that from one run:
-my reranker took MRR 0.825 → 0.933 (8/10 → 9/10 answers at rank 1) and cost
-**205× p50 latency, 17 seconds a query** — and the single query it *couldn't* fix
-was the one its first stage had already buried at rank 4. Also: don't use a
-generative LLM pointwise as your reranker. My 17s is 6 sequential 8B calls on a
-4GB GPU; a cross-encoder does the same job in one batched forward pass. The
-measurement indicts my implementation, not the technique.
+When your first-stage search is already finding the right page almost every
+time. A reranker can only re-sort candidates it was actually handed — it can't
+fix a page that never made it into the pile. It buys you *ordering quality*,
+not *coverage*, so if coverage is your actual problem, it's the wrong tool no
+matter how good it is. I've got both halves of that from one run: my reranker
+pushed the ranking-quality score from 0.825 to 0.933 — but cost **205x the
+latency**, 17 seconds per question instead of under a tenth of a second. And
+the one question it couldn't fix was the one where the first-stage search had
+already buried the answer too deep for the judge to ever see it. Also worth
+saying out loud: don't use a big general chat model as your reranker one
+candidate at a time — that's what made mine so slow. A purpose-built
+cross-encoder does the same comparison job in one fast batched pass. The slow
+number indicts my specific implementation, not the technique of reranking.
 
-**"Vector search is semantic — why would you ever want keyword matching?"**
-Because embeddings are **lossy compression, and rare literal tokens are the first
-thing they throw away.** Concretely from my run: *"What URL is the Beacon web
-console at?"* — vector put the chunk containing `console.beacon.aldritch.example`
-at **rank 3**; BM25 put it at **rank 1**, in 0.1 ms. A hostname has almost no
-distributional meaning, so cosine has nothing to grip. In enterprise corpora
-(error codes, SKUs, config keys, file paths, ticket ids) that's most of what users
-actually type. Caveat I'd volunteer: on my 10-chunk corpus vector still won three
-of four identifier queries at rank 1, because there was nothing for a smeared
-embedding to collide with. **The lexical advantage scales with corpus size and
-near-duplicate density** — which is why "we need hybrid" is a claim about your
-corpus, not about retrieval in general.
+**"Vector search is 'semantic' — why would you ever want dumb keyword
+matching?"**
+Because meaning-based search is *lossy compression*, and the very first thing
+it throws away is exactly the stuff that has no "meaning" — serial numbers,
+hostnames, error codes, file paths. Real example from my run: asking for the
+Beacon console's URL, vector search buried the chunk with
+`console.beacon.aldritch.example` at rank 3; plain keyword search found it at
+rank 1, in a tenth of a millisecond. A hostname doesn't *mean* anything, so a
+meaning-based map has nothing to grab onto. In real company documents — error
+codes, product SKUs, config keys, ticket numbers — that's a huge share of what
+people actually type into a search box. Caveat I'd say out loud unprompted:
+on my tiny 10-page test set, vector search still won 3 of 4 identifier
+questions at rank 1 anyway, because there was nothing else nearby for a smeared
+embedding to get confused with. **The advantage of keyword search scales with
+how big and how repetitive your document set is** — "we need hybrid search" is
+a claim about *your specific documents*, not a universal law about search.
 
 **"How big should k be?"**
-Day 5 Break #2 answered the floor (too small drops half the answer). Today added
-the ceiling — and something sharper: **the ranking of my retrievers flips with k.**
-Same run, recomputed: at k=2 hybrid beats vector 0.90 vs 0.80; at k=3 vector beats
-hybrid 1.00 vs 0.90; at k=4 they tie at 1.00. So "Recall@k improved" is not a
-claim until k is pinned, and picking the flattering k is the easiest honest-looking
-lie in this work. That's what MRR is doing next to it — it integrates over every k
-at once and says the two are a wash. Practically: set k from the recall curve
-(mine flattens at k=3–4), then watch MRR as the early warning, because a correct
-chunk sitting at rank 4 survives k=4 and dies the day someone trims k to save
-tokens. And k has a real cost on the other side — Part B showed 3 of 4 context
-slots changing with **zero** change to the answer, i.e. I was paying tokens for
-chunks the model ignored.
+Too small drops half the answer (that was Day 5's lesson). Today added the
+other half — and something sharper: **the ranking of "which search system
+wins" literally flips depending on what k you pick.** Same run, recomputed: at
+k=2, hybrid beats plain vector 0.90 vs 0.80. At k=3, plain vector beats hybrid
+1.00 vs 0.90. At k=4, tied. So "Recall@k improved" isn't a real claim until
+you name the k — and if you get to choose which k to report, picking the
+flattering one is the easiest way to be accidentally dishonest in this field.
+That's exactly why MRR sits next to it in the table — it averages over every
+k at once, so it can't be gamed the same way, and here it says the two systems
+are basically tied. Practically: pick k off of where your recall curve
+flattens out (mine flattened around k=3–4), then watch MRR as your smoke
+detector, because a chunk sitting at rank 4 survives k=4 today and dies the
+moment someone trims k to save money. And k costs something on the other side
+too — my Part-B test showed 3 of 4 context pages changing with **zero** change
+to the final answer, meaning I was paying extra tokens for pages the model
+never even used.
 
-## Would I ship this?
+---
 
-- **hybrid — no, not on this evidence.** +0.008 MRR is inside the noise, it caused
-  two regressions, and it adds a second index to keep in sync with the first (an
-  operational cost Day 5's stale-index break already showed me how to get bitten
-  by). I'd keep it behind a flag and re-run the harness once the corpus is big
-  enough for the lexical failure mode to actually appear.
-- **rerank — the result yes, this implementation no.** 17 s/query is not a
-  latency budget. The +0.117 MRR says the *precision* stage is where the gain
-  lives, so the next move is a real cross-encoder, then re-measure. If that lands
-  the same MRR at <100 ms, ship it.
-- **The thing that's genuinely worth keeping is `evaluation.py`** — gold set,
-  sanity check, comparison/per-query/disagreement tables. It's the only artifact
-  today that would have caught me shipping a no-op, and it's the skeleton Day 7
-  builds the answer-level harness on.
+## Chapter 9 — So, would I actually ship any of this?
 
-## Forward link to Day 7
-Today measured **retrieval** (did the right chunk arrive?). Day 7 measures **answers** (was the response right?) with a 20-question gold set and an LLM judge. Today's harness is the skeleton: `GoldQuery`, `evaluate()`, the comparison table. Day 7 swaps substring-grading for a judge and adds the answer-level number — *"we went from 60% to 85%"*. Note the two can disagree: perfect retrieval with a wrong answer is a generation bug (Day 5's territory), and that's exactly the split the two harnesses together let me prove.
+- **Hybrid search — no, not on this evidence.** A +0.008 nudge is inside the
+  noise, it caused two real regressions, and it adds a whole second index that
+  now has to stay in sync with the first (Day 5 already showed how painfully
+  that can go wrong). I'd keep it behind a feature flag and re-run this exact
+  test once the document set is big enough for keyword search's advantage to
+  actually have room to show up.
+- **Reranking — the *result* is worth shipping, this *implementation* isn't.**
+  17 seconds a question is not a latency budget, it's a broken product. But
+  the +0.117 gain says the *precision* stage really is where the value lives
+  here — so the next move is swapping in a real cross-encoder and re-measuring,
+  not giving up on reranking entirely. If a fast cross-encoder gets close to
+  that same score in under 100ms, ship it.
+- **The one thing that's unambiguously worth keeping is the test harness
+  itself** (`evaluation.py`) — the gold set, the self-check, the comparison
+  tables. It's the only piece of today's work that would have actually caught
+  me shipping a no-op change, and it's the exact skeleton Day 7 builds the
+  *answer-level* grading on top of.
+
+---
+
+## What comes next (Day 7)
+
+Today measured **retrieval**: did the right page reach the top of the pile at
+all? Day 7 measures **answers**: given that page, was what the AI actually
+*said* correct? That needs a smarter grader — a 20-question test set graded by
+an LLM acting as judge, not a simple substring check — because "did the answer
+sound right" isn't something you can check with `in` a string the way
+"did the right chunk show up" can.
+
+The two levels can disagree, and that disagreement is the whole point of
+building both: **perfect retrieval with a wrong final answer is a generation
+bug**, not a search bug — that's Day 5's territory resurfacing. Having both
+harnesses side by side is what lets me actually prove which stage broke,
+instead of guessing.
