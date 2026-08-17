@@ -174,6 +174,46 @@
                 "TOP_K": "${input:day6TopK}"
             },
             "justMyCode": false
+        },
+        {
+            // The full comparison: baseline (k=4) vs degraded (k=1) over all 20
+            // gold questions, exact_match + llm_judge. 80 sequential LLM calls
+            // (20 questions x 2 pipelines x [generate + judge]) — the slowest
+            // config in the repo after Day 6's rerank arm. These are the numbers
+            // that go in notes/day7_post.md.
+            "name": "Day 7 — Eval answers (baseline + degraded)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/day7_eval_answers.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "python": "${workspaceFolder}/.venv/bin/python",
+            "envFile": "${workspaceFolder}/.env",
+            "env": {
+                "PYTHONUNBUFFERED": "1",
+                "PYTHONPATH": "${workspaceFolder}/scripts"
+            },
+            "justMyCode": false
+        },
+        {
+            // Fast iteration loop: baseline only, half the LLM calls. Use while
+            // editing the gold set itself or debugging judging.evaluate_pipeline
+            // / the judge prompt — breakpoints there are actually usable without
+            // waiting on the degraded arm too.
+            "name": "Day 7 — baseline only (fast)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/day7_eval_answers.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "python": "${workspaceFolder}/.venv/bin/python",
+            "envFile": "${workspaceFolder}/.env",
+            "env": {
+                "PYTHONUNBUFFERED": "1",
+                "PYTHONPATH": "${workspaceFolder}/scripts",
+                "PIPELINES": "baseline"
+            },
+            "justMyCode": false
         }
     ],
     "inputs": [

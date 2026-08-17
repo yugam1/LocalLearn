@@ -201,6 +201,45 @@ Everything after Week 1 (agents/tool use, serving economics & quantization, fine
 
 ---
 
+## Week 2 (scoped 2026-08-17, after Week 1 closed out)
+
+Same rule as Week 1: don't move on until the thing runs (or, for Day 8, until the
+framework has been tested against real data) AND you've found its failure mode.
+Order below is deliberate, not the order the three P2/P3 topics were first listed
+in — cheapest-to-ship first, most-novel-infra last:
+
+- **Day 8 — Fine-tuning vs. RAG vs. prompting decision framework.** Tagged **P3**
+  in the priority table above — "a decision framework, not a hands-on skill" —
+  and the rig's 4GB VRAM (GTX 1650 Ti) makes a real fine-tune impractical for
+  anything worth demoing, so this is **not** a build-first day like Days 1-7.
+  Build a decision matrix (data volume, latency budget, $ cost, drift/retraining
+  cadence, engineering effort) and run it against **real data this project
+  already has**: every failure mode actually found in Days 5-7 (the chunking
+  break, the retrieval break, the hallucination break, the stale-index break,
+  and the two judge-too-strict misses from Day 7). *Break it:* for each one, ask
+  honestly — would fine-tuning have fixed this, or was it a RAG/prompt problem
+  fine-tuning can't touch? Find the one case (if any) across the whole week
+  where fine-tuning would've actually been the right call, and say so plainly
+  if there isn't one — a decision framework that always says "don't fine-tune"
+  isn't a framework, it's a bias.
+- **Day 9 — Agents / tool use.** P2, and the most FDE-relevant hands-on skill of
+  the three. Build a small tool-calling loop against a local Ollama model that
+  supports function calling (`llama3.1:8b`) — give it 2-3 tools, e.g. a
+  calculator and the Day 4-7 `retrieve()` wrapped as a `search_docs` tool — and
+  let the model decide when to call a tool vs. answer directly. *Break it:* get
+  it to call a tool with hallucinated/malformed arguments, or skip a tool call
+  it actually needed. Framing this makes RAG retrieval "just another tool" one
+  level up the stack, so it connects straight back to Day 5's retrieval-failure
+  taxonomy instead of being a fresh topic.
+- **Day 10 — Serving economics & quantization.** P2. Measure, don't derive:
+  tokens/sec at the quant levels already pulled locally (`llama3.2:3b` vs
+  `llama3.1:8b`), the GPU/CPU split Day 1 already found (8B doesn't fit in 4GB
+  VRAM, splits 45/55 and drops ~9.5x), and batching effects — turn that into a
+  real cost/latency table usable in a sizing conversation, the way Day 6/7
+  already turned retrieval quality into a table instead of a vibe.
+
+---
+
 ## Interview-answer bank (fill these in as you build)
 
 Keep a running doc. For each, you want a *from-experience* answer, not a textbook one:

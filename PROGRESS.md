@@ -38,8 +38,8 @@ Code + Claude Code = **Mac only** (the plan). ASUS is headless infra.
 
 ## Status
 
-**Current day:** Day 6 done and written up (also rewritten as a teacher-narration transcript, see below). **Day 7 (answer-level eval harness, LLM-as-judge) scaffolded, not yet run.**
-**Last updated:** 2026-08-16
+**Current day:** Week 1 complete. Week 2 roadmap scoped in `START_HERE.md` (Day 8 fine-tuning decision framework → Day 9 agents/tool use → Day 10 serving economics & quantization). **Day 8 not yet scaffolded.**
+**Last updated:** 2026-08-17
 
 ### Week 1 checklist
 - [x] **Day 1** — Ollama up; talk to API; observe tokens/context; break context window; write `notes/day1.md`
@@ -48,11 +48,50 @@ Code + Claude Code = **Mac only** (the plan). ASUS is headless infra.
 - [x] **Day 4** — full RAG pipeline (ingest → chunk → embed → store → retrieve → answer w/ citations); happy-path + out-of-corpus grounding test both run
 - [x] **Day 5** — break RAG 4 ways: chunking / retrieval / hallucination / stale index — run + notes filled
 - [x] **Day 6** — improve retrieval (hybrid BM25+vector, reranker); measured — and the measurement said the "improvement" was a no-op on this corpus
-- [ ] **Day 7** — eval harness: 20-Q gold set, exact-match + LLM-as-judge, produce a % (scaffolded, not run)
+- [x] **Day 7** — eval harness: 20-Q gold set, exact-match + LLM-as-judge, produce a % — run + notes filled; baseline 80%/90%, degraded 65%/60%
+
+### Week 2 checklist
+- [ ] **Day 8** — fine-tuning vs. RAG vs. prompting decision framework (P3, not build-first — test the framework against Days 5-7's real failure modes)
+- [ ] **Day 9** — agents / tool use: small tool-calling loop on `llama3.1:8b`, `retrieve()` wrapped as a tool
+- [ ] **Day 10** — serving economics & quantization: tokens/sec, GPU/CPU split, batching → a real cost/latency table
 
 ---
 
 ## Log (newest first)
+
+### 2026-08-17 — Week 2 roadmap scoped in START_HERE.md (no run yet)
+
+- `START_HERE.md` only named Week 2's three topics (agents/tool use, serving
+  economics & quantization, fine-tuning decision framework) with no day-by-day
+  breakdown — unlike Week 1, which was fully scoped before Day 1 ran. Added a
+  **"Week 2"** section mirroring that structure: **Day 8** fine-tuning vs.
+  RAG vs. prompting decision framework, **Day 9** agents/tool use, **Day 10**
+  serving economics & quantization.
+- **Order is deliberate, not topic-list order:** fine-tuning first because it's
+  the cheapest to ship (the priority table already tags it **P3** — "a decision
+  framework, not a hands-on skill" — and the rig's 4GB VRAM GTX 1650 Ti makes a
+  real fine-tune impractical to demo), agents/tool use second because it's the
+  most FDE-relevant hands-on P2 skill and reframes Day 4-7's `retrieve()` as
+  "just another tool," serving economics last.
+- **Day 8 will deliberately break the Week 1 build-first pattern** — instead of
+  a new script, it tests the decision framework against **real data this
+  project already has**: every failure mode found across Days 5-7 (chunking,
+  retrieval, hallucination, stale index, the two judge-too-strict misses), one
+  by one — would fine-tuning actually have fixed it? Point is to find out
+  honestly if the answer to that is ever "yes" across the whole week's data, not
+  to assume it never is.
+- **Next:** scaffold Day 8 (framework doc + the failure-mode-by-failure-mode
+  pass over Days 5-7) — not yet started.
+
+### 2026-08-17 — Day 7 run: k=1 drops judge-score 30 points, and not on the questions predicted to break
+
+- **Ran `day7_eval_answers.py`** against the ASUS → `result/day7.txt`; `notes/day7_post.md` filled. Judge sanity check passed (known-good→PASS, known-bad→FAIL) and self-consistency held (3/3 identical verdicts at temp 0) — trusted before reading any of the 20 real verdicts, per `sanity_check_judge`/`judge_self_consistency`.
+- **The money table:** `baseline` (k=4) **80.0% exact / 90.0% judge**, p50 39.0s. `degraded` (k=1) **65.0% exact / 60.0% judge**, p50 30.7s. A 15-point exact-match drop, a steeper 30-point judge drop, for a ~9s latency win.
+- **The predicted breaks were mostly wrong.** Only 2 of 3 `needs_chunks=2` questions broke under k=1 — the original Day 5 Break #2 anecdote (silent-Tag/OBD-II) actually **survived**, because the chunker happened to keep the trigger condition and the fix instructions in one 120-word window, so k=1 never had to choose. Meanwhile **3 questions predicted `needs_chunks=1` broke anyway** — not an information-quantity problem, a **ranking** problem: the one needed chunk wasn't reliably at rank 1 under plain vector search, so cutting to k=1 silently dropped it. That's a Day 6 recall-table finding wearing a Day 5 chunk-count costume.
+- **Exact vs. judge disagreed on 7/20 total** (4 baseline, 3 degraded). Judge was right in 5 of 7 (mostly rescuing correct paraphrases exact_match couldn't see, e.g. "1h" vs "1 hour response time") but **wrong in 2, and both times by being too strict** — flagging a reasonable elaboration ("moving vehicle stops" vs "vehicle stops") and a detail that was actually *in its own rubric* (Tag deactivation order) as unsupported. The Chapter 7 sanity check only tests the lenience-bias direction (does it PASS a bad answer); it never tested for an overly harsh judge, and this run found that failure mode live, undetected by the sanity check that had already passed.
+- **Verdict:** don't ship k=1 — the failure mode (right chunk not ranked first) isn't something you can scope around by eyeballing which questions "need more context," since the questions that broke weren't the ones predicted to. Trust the judge as a strong signal, not a blind release gate — one good/bad sanity pair caught lenience-direction failure but missed a harshness-direction one.
+- **Process note:** `day7_pre.md`'s prediction checkboxes were never actually filled in before the run, so several "did reality match the prediction?" questions in `day7_post.md` have no baseline to compare against and say so explicitly rather than fabricating a predicted number after the fact.
+- **Week 1 complete** (Days 1–7, all run + written up). Next: scope Week 2 — `START_HERE.md` names agents/tool use, serving economics & quantization, and a fine-tuning decision framework, but has no day-by-day breakdown yet, so Day 8 needs scaffolding from scratch before it can be run.
 
 ### 2026-08-16 — Day 6 notes rewritten as a teacher-transcript; Day 7 scaffolded (answer-level eval)
 
