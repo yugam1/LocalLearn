@@ -1,352 +1,390 @@
-# Phase 2 — Task 11: Kafka Advanced — Consumer Groups, DLT, Idempotency
-**Estimated Time:** 1.5 hours
-**Status:** ✅ Completed
+# Phase 2 — Task 11: Kafka Advanced — Consumer Groups, Partitions, Offsets, DLT
+**Estimated Time:** 1.5 hours | **Status:** ✅ Completed
 
 ---
 
-## 🎯 What You Learn
-1. Consumer group rebalancing — triggers, process, impact
-2. Partition assignment strategies (Range, RoundRobin, Sticky)
-3. Custom partitioner — business-rule-based routing
-4. Dead Letter Topics (DLT) — handling poison pills
-5. @RetryableTopic — retry with exponential backoff
-6. Idempotent consumers — preventing duplicate processing
-7. Batch consumption — high-throughput processing
-8. Offset management — inspect, pause, resume, reset
-9. Consumer lag monitoring
-10. Processed event tracking in database
+## Consumer Group Rebalancing
+
+**What:** Redistribution of partitions when group membership changes.
+
+**Triggers:**
+- Consumer joins group (new instance/scale-up)
+- Consumer crashes or gracefully leaves
+- Heartbeat timeout (network issue)
+- Topic partition count changes
+- Consumer subscription changes
+
+**Process:**
+```
+Consumer C joins →
+  Group coordinator notified
+  ALL consumers STOP processing (stop-the-world)
+  Partitions redistributed
+  Consumers resume with new assignments
+
+3 partitions + 2 consumers → 3 partitions + 3 consumers:
+Before: C1:[P0,P1], C2:[P2]
+After:  C1:[P0], C2:[P1], C3:[P2]
+```
+
+**Impact:** Processing gap during rebalance. Uncommitted offsets → duplicate processing on resume.
 
 ---
 
-## 🧠 Core Concepts
+## Partition Assignment Strategies
 
-### Consumer Group Rebalancing
-**Triggers:** consumer joins, consumer crashes, heartbeat timeout, partition count change.
-
-```
-Before (2 consumers, 3 partitions):
-  Consumer A → Partition 0, 1
-  Consumer B → Partition 2
-
-Consumer C joins → REBALANCE (stop-the-world!):
-  Consumer A → Partition 0
-  Consumer B → Partition 1
-  Consumer C → Partition 2
-
-Consumer B crashes → REBALANCE:
-  Consumer A → Partition 0, 1
-  Consumer C → Partition 2
-```
-
-**Impact:** ALL consumers stop processing during rebalance (latency spike). Uncommitted offsets → messages reprocessed after rebalance.
-
-### Partition Assignment Strategies
-| Strategy | How | Best For |
-|----------|-----|----------|
-| Range | Contiguous partitions | Single topic |
-| RoundRobin | Even distribution | Multiple topics |
-| **Sticky** | Keep existing assignments, minimize movement | **Production** |
+| Strategy | Behavior | Problem | Use |
+|---|---|---|---|
+| `Range` (default) | Contiguous partitions | Imbalance with multiple topics | Avoid |
+| `RoundRobin` | Even distribution | Doesn't minimize movement | OK |
+| `Sticky` | Minimal partition movement | None | **Production** |
 
 ```yaml
-spring.kafka.consumer.properties:
-  partition.assignment.strategy: org.apache.kafka.clients.consumer.StickyAssignor
+spring:
+  kafka:
+    consumer:
+      properties:
+        partition.assignment.strategy: org.apache.kafka.clients.consumer.StickyAssignor
 ```
 
-### Dead Letter Topic Pattern
-```
-Message fails → retry 1 → retry 2 → retry 3 → DLT (dead letter topic)
+Sticky: consumers keep most of their existing partitions during rebalance → less state rebuilding → faster recovery → less duplicate processing.
 
-Without DLT: failed message blocks entire partition!
-With DLT: failed message moved out, partition continues
+---
+
+## Offset Management Strategies
+
+### Auto-Commit (dangerous)
+```yaml
+enable-auto-commit: true
+auto.commit.interval.ms: 5000
+```
+Risk: Process message → crash before 5s commit → restart → message reprocessed as uncommitted.
+
+### Manual Per-Message (safest, slow)
+```java
+processOrder(event);
+ack.acknowledge(); // 1 network call per message
+```
+
+### Manual Batch Commit (production recommended)
+```java
+events.forEach(this::processOrder);
+ack.acknowledge(); // 1 commit for entire batch → 5-10x faster
+```
+
+---
+
+## Dead Letter Topic (DLT) Pattern
+
+**Problem:** One bad message blocks the entire partition.
+
+```
+Normal flow:  message → process → ack → next message
+Poison pill:  message → FAIL → retry → FAIL → retry → FAIL... (partition blocked!)
+
+Solution:
+message → fail → retry (backoff) → fail → retry → fail → DLT → ack → next message
+                                    ^---- unblocks partition ----^
 ```
 
 ```java
 @RetryableTopic(
-    attempts = "4",  // 1 original + 3 retries
-    backoff = @Backoff(delay = 1000, multiplier = 2.0, maxDelay = 10000),
-    // Retries at: 1s, 2s, 4s, then DLT
+    attempts = "4",          // 1 original + 3 retries
+    backoff = @Backoff(
+        delay = 1000,        // 1 second initial
+        multiplier = 2.0,    // Exponential: 1s → 2s → 4s
+        maxDelay = 10000     // Cap at 10s
+    ),
+    autoCreateTopics = "true",
+    topicSuffixingStrategy = TopicSuffixingStrategy.SUFFIX_WITH_INDEX_VALUE,
     dltTopicSuffix = ".dlt",
     include = {Exception.class},
     exclude = {IllegalArgumentException.class}  // Validation errors → DLT immediately
 )
-@KafkaListener(topics = "order.processed")
-public void process(OrderCreatedEvent event) { ... }
+@KafkaListener(topics = "order.processed", groupId = "order-processing-group")
+public void processWithRetry(
+        OrderCreatedEvent event,
+        @Header(KafkaHeaders.RECEIVED_TOPIC) String topic) {
+
+    log.info("Processing: orderId={}, topic={}", event.getOrderId(), topic);
+
+    if (event.getOrderId() == null) {
+        throw new IllegalArgumentException("orderId is null"); // → DLT immediately (no retry)
+    }
+    if (Math.random() < 0.5) {
+        throw new RuntimeException("Simulated transient error"); // → retry with backoff
+    }
+
+    log.info("Processed successfully: orderId={}", event.getOrderId());
+}
 
 @DltHandler
-public void handleDlt(OrderCreatedEvent event,
-        @Header(KafkaHeaders.EXCEPTION_MESSAGE) String error) {
-    log.error("DLT: orderId={}, error={}", event.getOrderId(), error);
-    // Save to DB, alert ops, create ticket
+public void handleDlt(
+        OrderCreatedEvent event,
+        @Header(KafkaHeaders.RECEIVED_TOPIC) String topic,
+        @Header(KafkaHeaders.EXCEPTION_MESSAGE) String errorMessage) {
+
+    log.error("DLT message: orderId={}, originalTopic={}, error={}",
+            event.getOrderId(), topic, errorMessage);
+
+    // Production actions:
+    saveToDltDatabase(event, topic, errorMessage);  // Store for manual review
+    sendOpsAlert(event, errorMessage);              // Alert on-call team
+    // metrics.increment("kafka.dlt.messages")
 }
 ```
 
-**Retry Topics Created Automatically:**
-- `order.processed`
+**Retry topics auto-created:**
 - `order.processed-retry-0` (1s delay)
 - `order.processed-retry-1` (2s delay)
 - `order.processed-retry-2` (4s delay)
-- `order.processed.dlt`
+- `order.processed.dlt` (permanent failure)
 
-### Idempotent Consumer
-**Problem:** At-least-once delivery → duplicates possible (crash after processing, before ack).
-**Solution:** Track processed event IDs.
+---
 
-```
-Attempt 1: Process → Success → App crashes before ack
-Restart: Message redelivered → Check DB → Already processed → Skip!
-```
+## Idempotent Consumer
+
+**Problem:** At-least-once delivery → duplicates on consumer restart/rebalance.
 
 ```java
+// entity/ProcessedEvent.java
 @Entity
 @Table(name = "processed_events",
-       indexes = @Index(name="idx_event_id", columnList="event_id", unique=true))
+    indexes = @Index(name = "idx_event_id", columnList = "event_id", unique = true))
+@Data @Builder @NoArgsConstructor @AllArgsConstructor
 public class ProcessedEvent {
-    @Id @GeneratedValue(strategy = IDENTITY)
-    private Long id;
-
-    @Column(name = "event_id", nullable = false, unique = true)
-    private String eventId;
-
+    @Id @GeneratedValue(strategy = GenerationType.IDENTITY) private Long id;
+    @Column(name = "event_id", nullable = false, unique = true) private String eventId;
     private String eventType;
     private String topic;
     private Integer partition;
     private Long offset;
     private String correlationId;
-    private LocalDateTime processedAt;
+    @CreationTimestamp private LocalDateTime processedAt;
     private Long processingDurationMs;
 }
-```
 
-```java
+// In consumer
 @KafkaListener(topics = "order.confirmed", groupId = "idempotent-group")
 @Transactional
 public void consumeIdempotent(OrderCreatedEvent event, Acknowledgment ack) {
+    log.info("Idempotent check: eventId={}", event.getEventId());
+
+    // Check if already processed
     if (processedEventRepo.existsByEventId(event.getEventId())) {
-        log.warn("DUPLICATE: eventId={} — skipping", event.getEventId());
-        ack.acknowledge();
+        log.warn("DUPLICATE DETECTED: eventId={} — skipping", event.getEventId());
+        ack.acknowledge(); // Still commit to advance offset
         return;
     }
 
     long start = System.currentTimeMillis();
-    processOrderConfirmed(event);
-    long duration = System.currentTimeMillis() - start;
+    processOrder(event); // Do the work
 
+    // Mark as processed (atomic with transaction)
     processedEventRepo.save(ProcessedEvent.builder()
             .eventId(event.getEventId())
             .eventType(event.getEventType())
-            .processingDurationMs(duration)
+            .topic("order.confirmed")
+            .correlationId(event.getCorrelationId())
+            .processingDurationMs(System.currentTimeMillis() - start)
             .build());
 
-    ack.acknowledge();  // Offset commit + DB save in same @Transactional
+    ack.acknowledge();
+    log.info("Processed: eventId={}", event.getEventId());
 }
 ```
 
-### Custom Partitioner
+**Why @Transactional here?** ProcessedEvent save + business operation are atomic. If business op fails, ProcessedEvent is NOT saved → message redelivered correctly.
+
+---
+
+## Batch Consumer (High Throughput)
+
+```java
+@KafkaListener(topics = "inventory.reserved", groupId = "batch-group",
+               containerFactory = "kafkaListenerContainerFactory")
+public void consumeBatch(
+        @Payload List<OrderCreatedEvent> events,
+        @Header(KafkaHeaders.RECEIVED_PARTITION) List<Integer> partitions,
+        @Header(KafkaHeaders.OFFSET) List<Long> offsets,
+        Acknowledgment ack) {
+
+    log.info("Batch received: count={}, partitions={}", events.size(), partitions);
+    long start = System.currentTimeMillis();
+
+    for (int i = 0; i < events.size(); i++) {
+        log.debug("Processing {}/{}: orderId={}, partition={}, offset={}",
+                i + 1, events.size(), events.get(i).getOrderId(), partitions.get(i), offsets.get(i));
+        processMessage(events.get(i));
+    }
+
+    ack.acknowledge(); // Single commit for entire batch!
+    long ms = System.currentTimeMillis() - start;
+    log.info("Batch done: count={}, totalMs={}, avgMs={}", events.size(), ms, ms / events.size());
+}
+```
+
+Enable batch mode:
+```yaml
+spring:
+  kafka:
+    listener:
+      type: batch
+    consumer:
+      max-poll-records: 100
+```
+
+**Performance:** 100 messages × 10ms each. Individual = 100 commits. Batch = 1 commit. ~5-10x faster.
+
+---
+
+## Custom Partitioner
+
 ```java
 public class OrderPartitioner implements Partitioner {
     @Override
     public int partition(String topic, Object key, byte[] keyBytes,
-                        Object value, byte[] valueBytes, Cluster cluster) {
-        int partitions = cluster.partitionCountForTopic(topic);
-        if (key == null) return (int)(System.currentTimeMillis() % partitions);
+                         Object value, byte[] valueBytes, Cluster cluster) {
+        int count = cluster.partitionCountForTopic(topic);
+        if (key == null) return (int)(System.currentTimeMillis() % count);
         String k = key.toString();
-        if (k.contains("premium") || k.contains("vip")) return 0;  // Dedicated partition
-        if (k.contains("bulk") || k.contains("wholesale")) return 1 % partitions;
-        return Math.abs(k.hashCode()) % partitions;  // Hash-based default
+        // Business routing rules:
+        if (k.contains("premium")) return 0;    // Dedicated partition for premium
+        if (k.contains("bulk")) return 1 % count; // Dedicated for bulk
+        return Math.abs(k.hashCode()) % count;  // Default: hash-based
     }
+    @Override public void close() {}
+    @Override public void configure(Map<String, ?> configs) {}
 }
-// Register: configProps.put(ProducerConfig.PARTITIONER_CLASS_CONFIG, OrderPartitioner.class.getName())
+
+// Register in producer config:
+config.put(ProducerConfig.PARTITIONER_CLASS_CONFIG, OrderPartitioner.class.getName());
 ```
 
-### Batch Consumer
+---
+
+## Consumer Offset Management API
+
 ```java
-// Factory config
-factory.setBatchListener(true);  // Enable batch mode
-
-// Consumer
-@KafkaListener(topics = "inventory.reserved", groupId = "batch-group")
-public void consumeBatch(List<OrderCreatedEvent> events,
-        @Header(KafkaHeaders.OFFSET) List<Long> offsets,
-        Acknowledgment ack) {
-    log.info("Batch: {} messages", events.size());
-    long start = System.currentTimeMillis();
-
-    events.forEach(this::processSingle);
-
-    long avg = (System.currentTimeMillis() - start) / events.size();
-    log.info("Batch done: count={}, avgMs={}", events.size(), avg);
-    ack.acknowledge();  // Single commit for entire batch — 5-10x faster!
-}
-```
-
-**Performance:** 1000 messages, batch=100:
-- Individual: 1000 ack network calls
-- Batch: 10 ack network calls → 10x fewer round trips
-
-### Offset Management
-```java
-@Service
+@Service @RequiredArgsConstructor @Slf4j
 public class KafkaOffsetService {
-    private final KafkaListenerEndpointRegistry registry;
+    private final KafkaAdmin kafkaAdmin;
+    private final KafkaListenerEndpointRegistry listenerRegistry;
 
-    // Pause all consumers (e.g., during maintenance)
-    public void pauseAll() {
-        registry.getAllListenerContainers().forEach(c -> { if (c.isRunning()) c.pause(); });
+    public Map<String, Long> getConsumerOffsets(String groupId)
+            throws ExecutionException, InterruptedException {
+        try (AdminClient ac = AdminClient.create(kafkaAdmin.getConfigurationProperties())) {
+            Map<TopicPartition, OffsetAndMetadata> offsets =
+                    ac.listConsumerGroupOffsets(groupId).partitionsToOffsetAndMetadata().get();
+            Map<String, Long> result = new LinkedHashMap<>();
+            offsets.forEach((tp, om) -> result.put(tp.topic() + "-" + tp.partition(), om.offset()));
+            return result;
+        }
     }
 
-    // Resume
-    public void resumeAll() {
-        registry.getAllListenerContainers().forEach(c -> { if (c.isPauseRequested()) c.resume(); });
+    public void pauseAllListeners() {
+        listenerRegistry.getAllListenerContainers().forEach(c -> { if (c.isRunning()) c.pause(); });
+        log.warn("All Kafka listeners paused");
     }
 
-    // Status
-    public Map<String, Object> getStatus() {
-        return registry.getAllListenerContainers().stream()
-                .collect(Collectors.toMap(
-                    MessageListenerContainer::getListenerId,
-                    c -> Map.of("running", c.isRunning(), "paused", c.isPauseRequested())
-                ));
+    public void resumeAllListeners() {
+        listenerRegistry.getAllListenerContainers().forEach(c -> { if (c.isPauseRequested()) c.resume(); });
+        log.info("All Kafka listeners resumed");
+    }
+
+    public Map<String, Object> getListenerStatus() {
+        List<Map<String, Object>> containers = listenerRegistry.getAllListenerContainers()
+                .stream()
+                .map(c -> Map.<String, Object>of(
+                        "id", c.getListenerId(),
+                        "running", c.isRunning(),
+                        "paused", c.isPauseRequested()))
+                .collect(Collectors.toList());
+        return Map.of("containers", containers, "total", containers.size());
     }
 }
 ```
 
-**Manual offset reset via CLI:**
+---
+
+## Offset Reset CLI Commands
+
 ```bash
-# Reset to earliest (replay all)
+# Reset to beginning — replay all messages
 kafka-consumer-groups --bootstrap-server localhost:9092 \
   --group order-service-group --topic order.created \
   --reset-offsets --to-earliest --execute
 
 # Reset to specific offset
---reset-offsets --to-offset 100 --execute
+kafka-consumer-groups --bootstrap-server localhost:9092 \
+  --group order-service-group --topic order.created:0 \
+  --reset-offsets --to-offset 100 --execute
 
-# Reset to timestamp (replay from point in time)
---reset-offsets --to-datetime 2024-10-16T10:00:00.000 --execute
+# Reset to timestamp — replay from specific time
+kafka-consumer-groups --bootstrap-server localhost:9092 \
+  --group order-service-group --topic order.created \
+  --reset-offsets --to-datetime 2024-10-16T10:00:00.000 --execute
 
-# Shift backward (replay last N messages)
---reset-offsets --shift-by -100 --execute
-```
-
-### Consumer Lag Monitoring
-```bash
+# Check consumer lag
 kafka-consumer-groups --bootstrap-server localhost:9092 \
   --describe --group order-service-group
-
-# Output:
-# GROUP               TOPIC         PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG
-# order-service-group order.created 0          1000            1000            0
-# order-service-group order.created 1          998             1000            2  ← lagging!
-# order-service-group order.created 2          1001            1001            0
-
-# LAG = LOG-END-OFFSET - CURRENT-OFFSET
-# LAG > 0 → consumer behind, may need scaling
 ```
 
 ---
 
-## 🛠️ Implementation Summary
+## auto.offset.reset
 
-### Files Added
-```
-kafka/partitioner/OrderPartitioner.java     — custom routing
-model/ProcessedEvent.java                   — idempotency tracking
-repository/ProcessedEventRepository.java
-service/DeadLetterTopicService.java         — @RetryableTopic + @DltHandler
-service/IdempotentKafkaConsumerService.java — duplicate detection
-service/BatchKafkaConsumerService.java      — high-throughput batch
-service/KafkaOffsetService.java             — pause/resume/status
-controller/KafkaAdminController.java        — REST API for kafka ops
-```
+| Value | Behavior | When to use |
+|---|---|---|
+| `earliest` | Read from partition beginning | New consumer needs historical data |
+| `latest` | Read from current end | Only care about new messages |
 
-### KafkaAdminController Endpoints
-```
-GET  /api/v1/kafka/admin/offsets/{groupId}  → offset per partition
-GET  /api/v1/kafka/admin/lag/{groupId}      → consumer lag
-POST /api/v1/kafka/admin/pause              → pause all consumers
-POST /api/v1/kafka/admin/resume             → resume all consumers
-GET  /api/v1/kafka/admin/status             → listener container status
+Only applies when NO committed offset exists for the consumer group.
+
+---
+
+## Cleanup Old Processed Events
+
+```java
+// In scheduled task service
+@Scheduled(cron = "0 0 3 * * ?") // Daily at 3 AM
+@Transactional
+public void cleanupOldProcessedEvents() {
+    log.info("Cleaning up old processed events");
+    try {
+        LocalDateTime cutoff = LocalDateTime.now().minusDays(30);
+        processedEventRepo.deleteByProcessedAtBefore(cutoff);
+        log.info("Cleanup done — removed events older than 30 days");
+    } catch (Exception e) {
+        log.error("Cleanup failed", e);
+    }
+}
 ```
 
 ---
 
-## 🧪 Testing
+## Interview Q&A
 
-```bash
-# Test 1: Idempotent Consumer
-curl -X POST http://localhost:8080/api/v1/orders ...  # creates event
-# Reset offset → message redelivered
-docker exec -it kafka kafka-consumer-groups \
-  --bootstrap-server localhost:9092 --group idempotent-consumer-group \
-  --topic order.confirmed --reset-offsets --to-earliest --execute
-# Restart app → logs "DUPLICATE: eventId=... — skipping"
+**Q: What triggers consumer group rebalancing?**
+Consumer joins/leaves/crashes, heartbeat timeout (session.timeout.ms), partition count changes, subscription changes. During rebalance: ALL consumers stop processing (stop-the-world). Use Sticky assignor to minimize partition movement and recovery time.
 
-# Test 2: DLT Retry (50% failure rate in DeadLetterTopicService)
-curl -X POST http://localhost:8080/api/v1/kafka/test/order-created
-# Watch: attempt 1 → fail → wait 1s → attempt 2 → fail → wait 2s → ... → DLT
-# Kafka UI: order.processed.dlt topic has the message
+**Q: Explain the Dead Letter Topic pattern.**
+After N retry attempts (exponential backoff), message sent to `topic.dlt`. Offset committed → partition unblocked → normal processing continues. DLT consumer alerts ops for manual investigation. Prevents poison pills from stopping partition forever. Use @RetryableTopic with @DltHandler.
 
-# Test 3: Batch consumer — send 50 orders
-for i in {1..50}; do curl -X POST .../orders -d '...' & done; wait
-# Log: "Batch: 50 messages, avgMs=11"
+**Q: How to implement idempotent consumer?**
+Track eventId in DB (unique constraint). Before processing: check if exists → skip + ack. If new: process + save eventId + ack. Wrap in @Transactional — process + save are atomic. If processing fails, eventId not saved → redelivery → retry.
 
-# Test 4: Pause/resume
-curl -X POST http://localhost:8080/api/v1/kafka/admin/pause
-curl -X POST .../orders  # Event published but NOT consumed (paused)
-curl -X POST http://localhost:8080/api/v1/kafka/admin/resume
-# Backlogged messages consumed immediately
+**Q: Batch vs individual consumption?**
+Individual: 1 commit per message (N network calls). Batch: 1 commit for N messages (1 network call). Batch 5-10x faster. Trade-off: if batch processing fails, ENTIRE batch reprocessed (at-least-once in batch mode).
 
-# Test 5: Rebalance
-./mvnw spring-boot:run                     # Instance 1
-SERVER_PORT=8081 ./mvnw spring-boot:run    # Instance 2 → triggers rebalance!
-# See: "Revoking previously assigned partitions" + "Setting newly assigned partitions"
-```
+**Q: Consumer lag — what is it?**
+Lag = LOG_END_OFFSET - CURRENT_OFFSET (number of unprocessed messages). High lag = consumer falling behind. Alert on: lag > N messages or lag > T minutes old. Check: `kafka-consumer-groups --describe --group`.
 
----
+**Q: Sticky vs RoundRobin partition assignment?**
+Sticky: minimizes partition movement during rebalance (consumers keep most partitions). RoundRobin: even distribution but reassigns more partitions on membership change. Sticky is better for stateful consumers and reduces rebalance time.
 
-## ✅ Completion Checklist
-- [ ] OrderPartitioner with premium/bulk routing
-- [ ] ProcessedEvent entity with unique index on event_id
-- [ ] ProcessedEventRepository with existsByEventId
-- [ ] DeadLetterTopicService with @RetryableTopic (4 attempts, exp backoff)
-- [ ] @DltHandler saving to DB + alerting
-- [ ] IdempotentKafkaConsumerService: check → process → save → ack
-- [ ] BatchKafkaConsumerService: List<> listener
-- [ ] KafkaOffsetService: pause/resume/status
-- [ ] KafkaAdminController: REST management endpoints
-- [ ] cleanupOldProcessedEvents @Scheduled (30-day retention)
-- [ ] Retry topics created in Kafka UI
-- [ ] DLT message visible after all retries exhausted
-- [ ] Duplicate message skipped (idempotency working)
-- [ ] Batch: single commit per batch visible in logs
-- [ ] Rebalance observed when second instance starts
-- [ ] Consumer lag = 0 after processing backlog
+**Q: Custom partitioner use cases?**
+Route premium customers to dedicated partition (priority processing), geographic routing (US → partition 0, EU → partition 1), separate hot-key traffic, ensure specific message types land in specific partitions.
 
----
-
-## 💬 Interview Q&A
-
-**Q: What triggers a consumer group rebalance?**
-A: Consumer joins, consumer crashes/heartbeat timeout, subscription changes, partition count change. During rebalance all consumers in group stop processing (stop-the-world). Sticky assignment minimizes partition movement.
-
-**Q: What is the Dead Letter Topic pattern?**
-A: Messages that fail after max retries are sent to a separate DLT topic instead of blocking the partition. DLT consumer alerts ops for manual intervention. Prevents poison pills from stopping all processing. Use @RetryableTopic for automatic DLT handling with Spring Kafka.
-
-**Q: How do you implement idempotent consumption?**
-A: Store event ID in DB after processing. Check before processing: if exists, skip and ack. Use unique constraint on event_id. Combine DB save + offset ack in same @Transactional for atomicity. Also: natural idempotency via upsert (INSERT ON CONFLICT DO NOTHING).
-
-**Q: What is consumer lag?**
-A: Difference between LOG-END-OFFSET (latest produced) and CURRENT-OFFSET (latest consumed). Lag > 0 means consumer is behind. High lag → consumer too slow, insufficient threads, or downstream service issue. Monitor with Prometheus + Grafana, alert when lag exceeds threshold.
-
-**Q: Batch vs individual message consumption — tradeoffs?**
-A: Individual: simpler, partial processing possible, one offset commit per message (many network calls). Batch: fewer commits (10x fewer), higher throughput, but entire batch reprocessed on failure. Use batch for high-volume, idempotent processing (inventory updates, analytics). Individual for critical business events.
-
-**Q: How do you replay Kafka messages?**
-A: Reset consumer group offset to earlier point using kafka-consumer-groups CLI or AdminClient API. Options: --to-earliest (all), --to-offset N (specific), --to-datetime (timestamp), --shift-by -N (N messages back). Ensure processing is idempotent before replaying!
-
-**Q: How do you pause Kafka consumers during maintenance?**
-A: Use KafkaListenerEndpointRegistry to get all MessageListenerContainers and call container.pause(). Messages accumulate in Kafka (within retention). Resume with container.resume(). Offset tracked by Kafka — consumers pick up exactly where they paused.
-
----
-
-## 🔗 Next Task
-**Task 12: Kafka Patterns — Event Sourcing, CQRS, Saga, Outbox** — architectural patterns that use Kafka as the backbone of distributed systems.
+**Q: How to replay messages from Kafka?**
+Reset consumer group offset: `--reset-offsets --to-earliest` (all), `--to-offset N` (specific), `--to-datetime` (time-based). Stop consumer group first. All committed offsets for that group are overwritten. Consumer resumes from new offset on restart.
