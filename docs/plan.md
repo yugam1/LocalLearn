@@ -61,20 +61,23 @@
 
 ---
 
-## ⬜ PHASE 3: Testing ⭐⭐⭐
+## 🔄 PHASE 3: Testing ⭐⭐⭐
 
 > **Goal:** Complete test suite with 80%+ coverage
 
 | # | Task | Time | Status |
 |---|------|------|--------|
-| 16 | Unit Testing: Service Layer with Mockito | 1hr | ⬜ |
-| 17 | Integration Testing: @SpringBootTest, TestRestTemplate | 1hr | ⬜ |
-| 18 | Repository Testing: @DataJpaTest, TestContainers | 1hr | ⬜ |
-| 19 | Controller Testing: @WebMvcTest, MockMvc | 1hr | ⬜ |
-| 20 | Contract Testing: Spring Cloud Contract | 1hr | ⬜ |
-| 21 | Advanced Testing: Parameterized, Test Slices, Coverage (JaCoCo) | 1hr | ⬜ |
+| 16 | Unit Testing: Service Layer with Mockito | 1hr | ✅ `OrderServiceImplTest` (18 tests) |
+| 17 | Integration Testing: @SpringBootTest, TestRestTemplate | 1hr | 🔄 `OrderApiIT` written (14 tests), never executed — Docker blocked |
+| 18 | Repository Testing: @DataJpaTest, TestContainers | 1hr | 🔄 `OrderRepositoryIT` written (17 tests), never executed — Docker blocked |
+| 19 | Controller Testing: @WebMvcTest, MockMvc | 1hr | ✅ `OrderControllerTest` (21 tests) |
+| 20 | Contract Testing: Spring Cloud Contract | 1hr | ⬜ Not covered by the phase doc either |
+| 21 | Advanced Testing: Parameterized, Test Slices, Coverage (JaCoCo) | 1hr | ✅ `OrderRequestValidationTest` (34 tests) + JaCoCo 0.80 gate |
 
-**Phase Total: ~6 hours | What You'll Build:** Full test suite, TestContainers for Kafka + PostgreSQL, contract tests for API consumers.
+**Phase Total: ~6 hours | What You Built:** 73 passing unit/slice tests on `mvn test`,
+31 more container-backed tests wired to `mvn verify`, JaCoCo enforcing 0.80 line coverage
+on the classes under test. See `phase3_tasks13_to_18.md` for the file map and the local
+Docker blocker.
 
 ---
 
@@ -241,7 +244,7 @@
 |-------|-------|-------|--------|
 | 1. Core Foundation | 7 | 8hr | ✅ Complete |
 | 2. Concurrency + Messaging | 8 | 10hr | 🔄 4/8 Done |
-| 3. Testing | 6 | 6hr | ⬜ |
+| 3. Testing | 6 | 6hr | 🔄 5/6 Done (2 need Docker to verify) |
 | 4. Security | 4 | 4hr | ⬜ |
 | 5. Observability | 5 | 5hr | ⬜ Logging ✅ |
 | 6. Caching | 3 | 3hr | ⬜ |

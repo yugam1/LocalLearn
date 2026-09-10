@@ -1,0 +1,7 @@
+{
+  "code-runner.executorMap": {
+    "java": "cd $dir && javac -proc:full -cp \"$workspaceRoot/lib/lombok.jar\" -d . $fileName && java -cp \".:$workspaceRoot/lib/lombok.jar\" $fileNameWithoutExt"
+  },
+  "code-runner.runInTerminal": true,
+  "code-runner.saveFileBeforeRun": true
+}

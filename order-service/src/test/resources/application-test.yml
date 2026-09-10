@@ -1,0 +1,46 @@
+# Profile used by the TestContainers-backed integration tests (*IT).
+# Datasource and Kafka coordinates are NOT set here — the containers get
+# random ports, so they are injected at runtime via @DynamicPropertySource.
+spring:
+  jpa:
+    open-in-view: false
+    hibernate:
+      # Each test context builds its schema from the entities and drops it
+      # again on shutdown. Phase 11 replaces this with Flyway migrations,
+      # at which point tests should verify the migrated schema instead.
+      ddl-auto: create-drop
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: false
+        # Required by OrderRepositoryIT, which asserts query counts to prove
+        # JOIN FETCH / @EntityGraph actually collapse the N+1.
+        generate_statistics: true
+        jdbc:
+          batch_size: 20
+
+  datasource:
+    hikari:
+      pool-name: TestHikariPool
+      maximum-pool-size: 5
+      minimum-idle: 1
+      # Fail fast in tests rather than hanging for 30s on a pool problem.
+      connection-timeout: 5000
+
+  # Quartz's demo job has nothing to assert and only slows the context down.
+  quartz:
+    auto-startup: false
+
+  kafka:
+    consumer:
+      auto-offset-reset: earliest
+
+logging:
+  level:
+    root: WARN
+    com.ecommerce.orderservice: INFO
+    org.testcontainers: INFO
+    # Testcontainers streams container stdout at DEBUG; far too noisy.
+    tc: WARN
+    org.apache.kafka: WARN
+    org.hibernate.SQL: WARN

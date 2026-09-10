@@ -1,5 +1,51 @@
 # Phase 3 — Testing (Tasks 13–18)
-**Estimated Time:** 6 hours | **Status:** ⬜ Not Started
+**Estimated Time:** 6 hours | **Status:** 🔄 Implemented (integration tests blocked on local Docker)
+
+---
+
+## What was built
+
+| File | Slice | Runner | Tests |
+|---|---|---|---|
+| `service/impl/OrderServiceImplTest.java` | Mockito, no Spring | Surefire | 18 |
+| `controller/OrderControllerTest.java` | `@WebMvcTest` | Surefire | 21 |
+| `validation/OrderRequestValidationTest.java` | Bean Validation, parameterized | Surefire | 34 |
+| `repository/OrderRepositoryIT.java` | `@DataJpaTest` + PostgreSQL container | Failsafe | 17 |
+| `integration/OrderApiIT.java` | `@SpringBootTest` + PostgreSQL + Kafka containers | Failsafe | 14 |
+| `support/TestData.java` | Object mother | — | — |
+| `support/AbstractPostgresIT.java` | Singleton container base | — | — |
+
+**Split:** Surefire runs `*Test` (fast, no infrastructure, every build). Failsafe runs
+`*IT` at `mvn verify` (needs a Docker daemon). That keeps `mvn test` usable without Docker.
+
+```bash
+mvn test      # 73 unit/slice tests + JaCoCo report and 0.80 gate
+mvn verify    # the above, then the 31 container-backed tests
+```
+
+**Coverage gate:** JaCoCo enforces 0.80 line coverage per class over the classes Phase 3
+actually tests (`OrderServiceImpl` 97%, `GlobalExceptionHandler` 83%, `OrderController` 89%),
+rather than a bundle-wide rule that untested Kafka/scheduler classes would dilute.
+Add classes to the `check` execution's `<includes>` as later phases test them.
+
+## Running the integration tests
+
+Requires a running Docker daemon. Testcontainers is pinned to 1.21.3 (overriding the
+Boot 3.2.5 BOM's 1.19.7) because the older docker-java predates Docker Engine 29.
+
+**Known local blocker:** on this machine (Docker Desktop, Engine 29.6.2) Testcontainers
+cannot get a Docker client — every strategy fails with `BadRequestException (Status 400)`
+on `/info`, so it reports *"Could not find a valid Docker environment"*. `curl --unix-socket`
+against the same socket returns 200 on every API version, and `docker info` works, so the
+daemon itself is fine; Docker Desktop's socket proxy is rejecting docker-java's requests.
+Neither `DOCKER_HOST` (`~/.docker/run/docker.sock`, `docker.raw.sock`), nor
+`DOCKER_API_VERSION=1.43`, nor the Testcontainers upgrade resolved it.
+
+Next things to try:
+- Docker Desktop → Settings → Advanced → enable **"Allow the default Docker socket to be used"**
+- Docker Desktop → Settings → General → disable **Enhanced Container Isolation** if on
+- Or use Colima instead: `brew install colima && colima start`, then
+  `export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock`
 
 ---
 

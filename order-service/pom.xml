@@ -19,6 +19,24 @@
 
     <properties>
         <java.version>17</java.version>
+        <jacoco.version>0.8.12</jacoco.version>
+        <!--
+          Overrides the Boot 3.2.5 BOM's Testcontainers 1.19.7 (docker-java
+          3.3.x), which predates Docker Engine 29. 1.21.3 brings docker-java
+          3.4.2. See docs/phase3_tasks13_to_18.md, "Running the integration
+          tests" — on Docker Desktop 29 the ITs additionally need the daemon's
+          plain socket enabled.
+        -->
+        <testcontainers.version>1.21.3</testcontainers.version>
+        <!--
+          Phase 3 target: 0.80 line coverage (docs/phase3_tasks13_to_18.md).
+          Enforced per-class over the classes Phase 3 actually tests, not over
+          the whole bundle — a bundle-wide rule would just be diluted by the
+          untested Kafka/scheduler classes that later phases will cover.
+          Add classes to the <includes> list in the jacoco `check` execution
+          as each phase brings them under test.
+        -->
+        <jacoco.line.minimum>0.80</jacoco.line.minimum>
     </properties>
 
     <dependencies>
@@ -94,6 +112,30 @@
             <artifactId>spring-kafka-test</artifactId>
             <scope>test</scope>
         </dependency>
+
+        <!-- TestContainers (Phase 3, Task 18) — versions managed by the Boot BOM -->
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>kafka</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Polling assertions for async/Kafka integration tests -->
+        <dependency>
+            <groupId>org.awaitility</groupId>
+            <artifactId>awaitility</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
@@ -109,6 +151,91 @@
                         </exclude>
                     </excludes>
                 </configuration>
+            </plugin>
+
+            <!--
+              Surefire runs *Test — fast, no infrastructure, every build.
+              Failsafe runs *IT — TestContainers-backed, needs a Docker daemon,
+              bound to `mvn verify`. Splitting them keeps `mvn test` runnable
+              on a laptop without Docker.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <includes>
+                        <include>**/*Test.java</include>
+                    </includes>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>integration-test</goal>
+                            <goal>verify</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- Coverage (Phase 3, Task 21) -->
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <version>${jacoco.version}</version>
+                <configuration>
+                    <excludes>
+                        <exclude>**/model/**</exclude>
+                        <exclude>**/dto/**</exclude>
+                        <exclude>**/event/**</exclude>
+                        <exclude>**/config/**</exclude>
+                        <exclude>**/*Application.class</exclude>
+                    </excludes>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>prepare-agent</id>
+                        <goals>
+                            <goal>prepare-agent</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>report</id>
+                        <phase>test</phase>
+                        <goals>
+                            <goal>report</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>check</id>
+                        <phase>test</phase>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <rule>
+                                    <element>CLASS</element>
+                                    <includes>
+                                        <include>com.ecommerce.orderservice.service.impl.OrderServiceImpl</include>
+                                        <include>com.ecommerce.orderservice.controller.OrderController</include>
+                                        <include>com.ecommerce.orderservice.exception.GlobalExceptionHandler</include>
+                                    </includes>
+                                    <limits>
+                                        <limit>
+                                            <counter>LINE</counter>
+                                            <value>COVEREDRATIO</value>
+                                            <minimum>${jacoco.line.minimum}</minimum>
+                                        </limit>
+                                    </limits>
+                                </rule>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>

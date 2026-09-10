@@ -1,0 +1,21 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "start-infra",
+      "detail": "Kafka stack + Postgres (Postgres is not in docker-compose-kafka.yml)",
+      "type": "shell",
+      "command": "docker compose -f docker-compose-kafka.yml up -d && (docker start order-service-postgres 2>/dev/null || docker run -d --name order-service-postgres -e POSTGRES_DB=orderdb -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:16)",
+      "options": { "cwd": "${workspaceFolder}/order-service" },
+      "problemMatcher": [],
+      "presentation": { "reveal": "silent", "panel": "shared" }
+    },
+    {
+      "label": "stop-infra",
+      "type": "shell",
+      "command": "docker compose -f docker-compose-kafka.yml down && docker rm -f order-service-postgres",
+      "options": { "cwd": "${workspaceFolder}/order-service" },
+      "problemMatcher": []
+    }
+  ]
+}

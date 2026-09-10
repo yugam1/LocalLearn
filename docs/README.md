@@ -35,10 +35,18 @@
 
 ---
 
-### Phase 3–14: Remaining Phases ⬜ NOT STARTED
+### Phase 3: Testing 🔄 IN PROGRESS
+| File | Tasks | Topics |
+|---|---|---|
+| `phase3_tasks13_to_18.md` | Tasks 16–21 | Mockito, @WebMvcTest, @DataJpaTest, TestContainers, parameterized tests, JaCoCo |
+
+`mvn test` → 73 unit/slice tests. `mvn verify` → adds 31 container-backed tests (needs Docker).
+
+---
+
+### Phase 4–14: Remaining Phases ⬜ NOT STARTED
 | File | Phase | Topics |
 |---|---|---|
-| `phase3_tasks13_to_18.md` | 3 — Testing | Mockito, @WebMvcTest, @DataJpaTest, TestContainers, JaCoCo |
 | `phase4_tasks19_to_22.md` | 4 — Security | JWT, Spring Security, RBAC, OAuth2, CORS |
 | `phase5_tasks24_to_27.md` | 5 — Observability | Actuator, Micrometer, Prometheus, Zipkin |
 | `phase6_tasks28_to_30.md` | 6 — Caching | @Cacheable, Redis, Caffeine, multi-level cache |
@@ -58,7 +66,7 @@
 ### Must Know (Do First):
 1. ✅ Phase 1 — All 7 tasks (REST, JPA, Transactions, Logging)
 2. ✅ Phase 2 — Tasks 8-11 (Thread pools, Scheduling, Kafka)
-3. ⬜ Phase 3 — Testing (Mockito, TestContainers)
+3. 🔄 Phase 3 — Testing (Mockito, TestContainers)
 4. ⬜ Phase 4 — Security + JWT
 5. ⬜ Phase 5 — Actuator + Metrics
 

@@ -34,7 +34,10 @@ public class DeadLetterTopicService {
             attempts = "4", // 1 original + 3 retries
             backoff = @Backoff(delay = 1000, multiplier = 2.0, maxDelay = 10000),
             dltTopicSuffix = ".dlt",
-            include = {RuntimeException.class},
+            // Only one classifier direction is allowed — Spring Kafka rejects
+            // include + exclude together ("Please use only retryOn() or only
+            // notRetryOn()"). exclude-only keeps the intent: retry everything
+            // except IllegalArgumentException, which is not transient.
             exclude = {IllegalArgumentException.class},
             listenerContainerFactory = "retryableKafkaListenerContainerFactory")
     @KafkaListener(

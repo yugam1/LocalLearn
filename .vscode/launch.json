@@ -1,0 +1,35 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "java",
+      "name": "order-service",
+      "request": "launch",
+      "mainClass": "com.ecommerce.orderservice.OrderServiceApplication",
+      "projectName": "order-service",
+      // logback-spring.xml writes to a relative "logs/" dir — without this,
+      // logs land in the workspace root instead of order-service/logs.
+      "cwd": "${workspaceFolder}/order-service",
+      "args": [],
+      "env": {}
+    },
+    {
+      "type": "java",
+      "name": "order-service (infra first)",
+      "request": "launch",
+      "mainClass": "com.ecommerce.orderservice.OrderServiceApplication",
+      "projectName": "order-service",
+      "cwd": "${workspaceFolder}/order-service",
+      "preLaunchTask": "start-infra"
+    },
+    {
+      // Use with: ./mvnw spring-boot:run -Dspring-boot.run.jvmArguments="-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005"
+      "type": "java",
+      "name": "order-service (attach :5005)",
+      "request": "attach",
+      "hostName": "localhost",
+      "port": 5005,
+      "projectName": "order-service"
+    }
+  ]
+}
