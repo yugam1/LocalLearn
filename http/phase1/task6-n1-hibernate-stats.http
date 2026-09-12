@@ -1,0 +1,162 @@
+###############################################################################
+# Phase 1 · Task 6 — N+1 Queries, Lazy vs Eager, @BatchSize, Hibernate Statistics
+# Doc: docs/phase1_task6.md
+# Code: controller/StatsController.java, service/impl/StatisticsServiceImpl.java
+#
+# /api/v1/stats/hibernate returns:
+#   queryExecutionCount, entityLoadCount, collectionLoadCount,
+#   collectionFetchCount, prepareStatementCount, connectCount, potentialN1Problem
+#
+# The tell for N+1: collectionFetchCount climbing far faster than
+# collectionLoadCount. fetchCount counts collections initialised by a SEPARATE
+# query; loadCount counts collections loaded overall.
+#
+# Requires spring.jpa.properties.hibernate.generate_statistics=true (already on).
+# Statistics are cumulative since app start — always take a BEFORE reading.
+###############################################################################
+
+@base = {{host}}/api/v1/orders
+@stats = {{host}}/api/v1/stats/hibernate
+
+###############################################################################
+# Setup — you need several orders WITH items for any of this to be visible.
+# Run task4's three seeds first, or fire request 0 below a few times.
+###############################################################################
+
+### 0 · Seed an order with multiple items (send 5–10 times)
+# Expect: 201
+POST {{base}}
+Content-Type: application/json
+
+{
+  "customerName": "Stats Sam",
+  "customerEmail": "sam@example.com",
+  "items": [
+    { "productName": "Widget", "quantity": 1, "unitPrice": 10.00 },
+    { "productName": "Gadget", "quantity": 2, "unitPrice": 20.00 },
+    { "productName": "Gizmo",  "quantity": 3, "unitPrice": 30.00 }
+  ]
+}
+
+###############################################################################
+# EXPERIMENT A — DTO projection: zero collection fetches
+###############################################################################
+
+### A1 · BEFORE reading
+# Expect: 200. Note queryExecutionCount and collectionFetchCount.
+GET {{stats}}
+
+### A2 · Summary report — JPQL constructor expression, no items touched
+# Expect: 200
+GET {{base}}/summary-report
+
+### A3 · AFTER reading
+# Expect: 200. queryExecutionCount +1, collectionFetchCount UNCHANGED.
+# Projections can't trigger N+1 because there's no collection to initialise.
+GET {{stats}}
+
+###############################################################################
+# EXPERIMENT B — interface projection, same result
+###############################################################################
+
+### B1 · BEFORE
+GET {{stats}}
+
+### B2 · Interface projection
+GET {{base}}/summaries
+
+### B3 · AFTER
+# Expect: queryExecutionCount +1, collectionFetchCount still unchanged
+GET {{stats}}
+
+###############################################################################
+# EXPERIMENT C — the paged search, which DOES touch items
+#
+# searchOrders returns OrderResponse (items included) for a whole page. With N
+# orders on the page, a naive lazy load = 1 query for the page + N queries for
+# the items. @BatchSize(size = 10) on Order.items collapses those N queries into
+# ceil(N/10) queries using "WHERE order_id IN (?,?,…)".
+###############################################################################
+
+### C1 · BEFORE
+GET {{stats}}
+
+### C2 · Fetch a page of 10 orders, each with items
+GET {{base}}?page=0&size=10
+
+### C3 · AFTER — do the arithmetic
+# With @BatchSize(10) and 10 orders on the page:
+#   queryExecutionCount ≈ +2  (1 page query + 1 batched item query, + count query)
+# Without it you'd see ≈ +11.
+# collectionFetchCount tells you how many collections needed a separate trip.
+# Expect: 200
+GET {{stats}}
+
+### C4 · Bigger page — does the query count scale with N, or with N/batchSize?
+# size=25 with @BatchSize(10) → 3 batched item queries, not 25.
+# If query count tracks N linearly, batching isn't being applied.
+GET {{base}}?page=0&size=25
+
+### C5 · AFTER the bigger page
+GET {{stats}}
+
+###############################################################################
+# EXPERIMENT D — single-order reads use JOIN FETCH / entity graph: always 1 query
+###############################################################################
+
+### D1 · BEFORE
+GET {{stats}}
+
+### D2 · findByIdWithItems — "LEFT JOIN FETCH o.items"
+GET {{base}}/{{orderId}}
+
+### D3 · AFTER
+# Expect: queryExecutionCount +1 exactly. collectionFetchCount unchanged —
+# the collection came back in the SAME query, so it was never "fetched" separately.
+GET {{stats}}
+
+### D4 · @EntityGraph path — declarative, same SQL shape
+GET {{base}}/by-number/{{orderNumber}}
+
+### D5 · AFTER
+# Expect: +1 again
+GET {{stats}}
+
+###############################################################################
+# EXPERIMENT E — aggregate instead of fetch-then-count
+###############################################################################
+
+### E1 · BEFORE
+GET {{stats}}
+
+### E2 · Item counts via GROUP BY / COUNT
+# The alternative — load every order, then call items.size() — is textbook N+1.
+GET {{base}}/item-counts
+
+### E3 · AFTER
+# Expect: +1 query, 0 collection fetches, for data that "needs" the items
+GET {{stats}}
+
+###############################################################################
+# The verdict flag
+###############################################################################
+
+### F · potentialN1Problem
+# StatisticsServiceImpl#isPotentialN1Problem compares fetch vs load counts.
+# It's cumulative since startup, so a single bad endpoint can leave it true
+# forever — restart the app for a clean baseline before judging.
+# Expect: 200
+GET {{stats}}
+
+###############################################################################
+# Cross-check against the JDBC layer — statement counts and pool pressure
+###############################################################################
+
+### G1 · Hikari active connections during a heavy read
+GET {{host}}/actuator/metrics/hikaricp.connections.active
+
+### G2 · Enable SQL logging for the definitive answer
+# Statistics tell you HOW MANY. To see WHICH queries, flip
+# spring.jpa.show-sql: true (and hibernate.format_sql is already true),
+# then re-run experiment C and count the SELECTs in the console.
+GET {{stats}}

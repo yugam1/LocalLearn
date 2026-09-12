@@ -8,7 +8,6 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.AsyncConfigurer;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
-import java.util.concurrent.Executor;
 import java.util.concurrent.ThreadPoolExecutor;
 
 /**
@@ -26,10 +25,16 @@ public class AsyncConfig implements AsyncConfigurer {
     /**
      * Default pool, injected wherever {@code @Async} doesn't name a
      * qualifier and returned as Spring's application-wide async executor.
+     *
+     * <p>Declared as {@link ThreadPoolTaskExecutor} rather than {@code Executor}
+     * (a covariant override of {@link AsyncConfigurer#getAsyncExecutor()}) so the
+     * bean definition's type is the concrete pool — otherwise injection points
+     * asking for a {@code ThreadPoolTaskExecutor}, such as
+     * {@code ThreadPoolMonitoringService}, find no candidate.
      */
     @Override
     @Bean(name = "taskExecutor")
-    public Executor getAsyncExecutor() {
+    public ThreadPoolTaskExecutor getAsyncExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
         executor.setCorePoolSize(10);
         executor.setMaxPoolSize(50);

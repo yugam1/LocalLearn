@@ -1,0 +1,190 @@
+###############################################################################
+# Phase 1 · Task 2 — Bean Validation + @RestControllerAdvice
+# Doc: docs/phase1_task2.md
+# Code: exception/GlobalExceptionHandler.java, dto/request/OrderRequest.java
+#
+# Every error below comes back in the same ErrorResponse envelope:
+#   { timestamp, status, error, message, path, errors:[{field, rejectedValue, message}] }
+# `errors` is only populated for MethodArgumentNotValidException (400 validation).
+###############################################################################
+
+@base = {{host}}/api/v1/orders
+
+### 1 · Everything wrong at once — @Valid collects ALL violations, not just the first
+# Expect: 400. errors[] should list customerName (blank), customerEmail (not an email),
+# and the nested item fields — nested checks only run because of @Valid on the list.
+POST {{base}}
+Content-Type: application/json
+
+{
+  "customerName": "",
+  "customerEmail": "invalid",
+  "items": [
+    { "productName": "A", "quantity": 0, "unitPrice": -1 }
+  ]
+}
+
+### 2 · @NotBlank vs @NotEmpty — whitespace-only name
+# @NotBlank trims first, so "   " is rejected. @NotEmpty would have allowed it.
+# Expect: 400, errors[0].field = "customerName"
+POST {{base}}
+Content-Type: application/json
+
+{
+  "customerName": "   ",
+  "customerEmail": "john@example.com",
+  "items": [{ "productName": "Laptop", "quantity": 1, "unitPrice": 999.99 }]
+}
+
+### 3 · Invalid email only — one field, one error
+# Expect: 400, errors[0].field = "customerEmail", rejectedValue = "notanemail"
+POST {{base}}
+Content-Type: application/json
+
+{
+  "customerName": "John",
+  "customerEmail": "notanemail",
+  "items": [{ "productName": "Laptop", "quantity": 1, "unitPrice": 999.99 }]
+}
+
+### 4 · Empty items list — @NotEmpty on the collection
+# Expect: 400, message "Order must contain at least one item"
+POST {{base}}
+Content-Type: application/json
+
+{
+  "customerName": "John Doe",
+  "customerEmail": "john@example.com",
+  "items": []
+}
+
+### 5 · Nested path in the error — errors[].field is "items[1].quantity"
+# Custom @ValidOrderQuantity on quantity (see #5b). Note the indexed field path —
+# that's how the client knows WHICH item failed. Item 0 is fine; item 1 is not.
+# Expect: 400, field = "items[1].quantity"
+POST {{base}}
+Content-Type: application/json
+
+{
+  "customerName": "John Doe",
+  "customerEmail": "john@example.com",
+  "items": [
+    { "productName": "Laptop", "quantity": 1, "unitPrice": 999.99 },
+    { "productName": "Mouse", "quantity": 5000, "unitPrice": 25.00 }
+  ]
+}
+
+### 5b · Custom constraint — @ValidOrderQuantity / OrderQuantityValidator
+# quantity is validated by the ConstraintValidator SPI, not by @Min/@Max.
+# OrderQuantityValidator calls disableDefaultConstraintViolation() and then
+# buildConstraintViolationWithTemplate(...), so the annotation's own
+# message() default ("Invalid order quantity") is suppressed and replaced.
+# Both out-of-range ends produce the SAME message — that's the point of
+# building it programmatically instead of declaring two annotations.
+# Expect: 400, errors[0].message = "Quantity must be between 1 and 1000"
+POST {{base}}
+Content-Type: application/json
+
+{
+  "customerName": "John Doe",
+  "customerEmail": "john@example.com",
+  "items": [{ "productName": "Laptop", "quantity": 0, "unitPrice": 999.99 }]
+}
+
+### 5c · Null quantity — the validator returns true, @NotNull catches it
+# isValid() short-circuits on null so the two constraints don't both fire.
+# Expect: 400, errors[0].message = "Quantity is required" (NOT the range message)
+POST {{base}}
+Content-Type: application/json
+
+{
+  "customerName": "John Doe",
+  "customerEmail": "john@example.com",
+  "items": [{ "productName": "Laptop", "quantity": null, "unitPrice": 999.99 }]
+}
+
+### 6 · @Digits — too many decimal places for money
+# Expect: 400, field = "items[0].unitPrice" (max 6 integer digits, 2 fraction digits)
+POST {{base}}
+Content-Type: application/json
+
+{
+  "customerName": "John Doe",
+  "customerEmail": "john@example.com",
+  "items": [{ "productName": "Laptop", "quantity": 1, "unitPrice": 999.99999 }]
+}
+
+### 7 · 404 — OrderNotFoundException → handleOrderNotFound
+# Expect: 404, message "Order not found with ID: 9999999", errors = null
+GET {{base}}/9999999
+
+### 8 · 404 on the natural-key lookup too
+# Expect: 404
+GET {{base}}/by-number/ORD-DOES-NOT-EXIST
+
+### 9 · Malformed JSON (trailing comma) — never reaches @Valid
+# HttpMessageNotReadableException falls through to the catch-all handler.
+# Expect: 400 from Spring's default, or 500 from handleAll — worth knowing which,
+# because an unhandled parse error leaking a 500 is a real API smell.
+POST {{base}}
+Content-Type: application/json
+
+{
+  "customerName": "John Doe",
+  "customerEmail": "john@example.com",
+}
+
+### 10 · Wrong type for an enum @RequestParam
+# status=NOT_A_STATUS can't bind to OrderStatus.
+# Expect: 400 (or 500 via handleAll — check which, same lesson as #9)
+GET {{base}}?status=NOT_A_STATUS
+
+### 11 · Unknown JSON property — is the API strict or lenient?
+# Jackson ignores unknown fields by default unless FAIL_ON_UNKNOWN_PROPERTIES is on.
+# Expect: 201 (lenient default). If you'd rather reject typos, that's a config change.
+POST {{base}}
+Content-Type: application/json
+
+{
+  "customerName": "John Doe",
+  "customerEmail": "john@example.com",
+  "totalAmount": 0.01,
+  "status": "DELIVERED",
+  "items": [{ "productName": "Laptop", "quantity": 1, "unitPrice": 999.99 }]
+}
+
+###############################################################################
+# 12 · 422 Unprocessable Entity — InsufficientStockException
+#
+# Structurally valid, but fails a BUSINESS rule. That's the 400-vs-422 distinction.
+# The `products` table is empty by default and InventoryServiceImpl treats unknown
+# products as untracked, so you must seed a row first:
+#
+#   psql -h localhost -U postgres -d orderdb \
+#     -c "INSERT INTO products (name, stock) VALUES ('Limited Widget', 2)
+#         ON CONFLICT (name) DO UPDATE SET stock = 2;"
+#
+# Then order 5 of them.
+###############################################################################
+
+### 12 · Order more than the seeded stock
+# Expect: 422, message "…Limited Widget… requested 5 … available 2"
+POST {{base}}
+Content-Type: application/json
+
+{
+  "customerName": "Greedy Buyer",
+  "customerEmail": "greedy@example.com",
+  "items": [{ "productName": "Limited Widget", "quantity": 5, "unitPrice": 10.00 }]
+}
+
+### 13 · Order within stock — same endpoint, happy path
+# Expect: 201, and the products row drops from 2 to 1
+POST {{base}}
+Content-Type: application/json
+
+{
+  "customerName": "Reasonable Buyer",
+  "customerEmail": "fine@example.com",
+  "items": [{ "productName": "Limited Widget", "quantity": 1, "unitPrice": 10.00 }]
+}

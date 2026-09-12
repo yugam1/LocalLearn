@@ -5,9 +5,10 @@ import jakarta.validation.ConstraintValidatorContext;
 
 /**
  * Custom business-rule validator demonstrating the ConstraintValidator SPI.
- * The @Min/@Max annotations on OrderItemRequest.quantity already enforce
- * this range declaratively; this class exists to show how a validator with
- * custom messaging/logic is wired (see docs/phase1_task2.md, Step 8).
+ * Applied to OrderItemRequest.quantity via {@link ValidOrderQuantity}, in
+ * place of the declarative @Min/@Max pair, so the programmatic message
+ * building below is what clients actually see
+ * (see docs/phase1_task2.md, Step 8).
  */
 public class OrderQuantityValidator implements ConstraintValidator<ValidOrderQuantity, Integer> {
 

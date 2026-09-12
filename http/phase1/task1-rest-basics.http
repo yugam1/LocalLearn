@@ -1,0 +1,79 @@
+###############################################################################
+# Phase 1 · Task 1 — REST API Basics, DI, Layered Architecture
+# Doc: docs/phase1_task1.md
+#
+# What to notice:
+#   - POST returns 201 (ResponseEntity.status(CREATED)), not 200
+#   - DELETE returns 204 No Content with an empty body
+#   - The server owns orderNumber, status, totalAmount, orderDate — you never send them
+###############################################################################
+
+@base = {{host}}/api/v1/orders
+
+### 0 · Is the app up?
+# Expect: 200 {"status":"UP"}
+GET {{host}}/actuator/health
+
+### 1 · CREATE — POST /api/v1/orders
+# Expect: 201 Created. Response body carries the generated id + orderNumber.
+# @name createOrder
+POST {{base}}
+Content-Type: application/json
+
+{
+  "customerName": "John Doe",
+  "customerEmail": "john@example.com",
+  "items": [
+    { "productName": "MacBook Pro", "quantity": 1, "unitPrice": 2499.99 }
+  ]
+}
+
+### 2 · READ ONE — GET /api/v1/orders/{id}
+# Chained off request 1 — send that first, then this needs no editing.
+# Expect: 200 with the same payload you just created.
+GET {{base}}/{{createOrder.response.body.$.id}}
+
+### 3 · READ ONE BY BUSINESS KEY — GET /api/v1/orders/by-number/{orderNumber}
+# Two lookup paths for the same resource: surrogate key (id) vs natural key (orderNumber).
+# Expect: 200
+GET {{base}}/by-number/{{createOrder.response.body.$.orderNumber}}
+
+### 4 · READ MANY — GET /api/v1/orders
+# Returns a Spring Data Page, not a bare array: {content:[…], totalElements, totalPages, …}
+# Expect: 200
+GET {{base}}?page=0&size=10
+
+### 5 · UPDATE (full replace) — PUT /api/v1/orders/{id}
+# PUT is idempotent: send this twice, same end state. Items are fully replaced,
+# not merged — that's the semantic difference from PATCH.
+# Expect: 200 with totalAmount recomputed to 4999.98
+PUT {{base}}/{{createOrder.response.body.$.id}}
+Content-Type: application/json
+
+{
+  "customerName": "John Updated",
+  "customerEmail": "john@example.com",
+  "items": [
+    { "productName": "MacBook Pro M3", "quantity": 2, "unitPrice": 2499.99 }
+  ]
+}
+
+### 6 · Re-read to confirm the replace took effect
+# Expect: 200, customerName "John Updated", exactly 1 item with quantity 2
+GET {{base}}/{{createOrder.response.body.$.id}}
+
+### 7 · DELETE — DELETE /api/v1/orders/{id}
+# Expect: 204 No Content, empty body
+DELETE {{base}}/{{createOrder.response.body.$.id}}
+
+### 8 · Confirm it's gone
+# Expect: 404 with the GlobalExceptionHandler error shape (see task 2)
+GET {{base}}/{{createOrder.response.body.$.id}}
+
+###############################################################################
+# Scratch: hardcoded id, for when you don't want to re-run the whole file
+###############################################################################
+
+### Get order 1
+# Expect: 200 if it exists, otherwise 404
+GET {{base}}/{{orderId}}

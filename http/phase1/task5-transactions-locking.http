@@ -1,0 +1,232 @@
+###############################################################################
+# Phase 1 · Task 5 — Propagation, Isolation, Optimistic & Pessimistic Locking
+# Doc: docs/phase1_task5.md
+# Code: service/impl/OrderServiceImpl.java, OrderNestedTransactionHelper.java,
+#       AuditServiceImpl.java (REQUIRES_NEW), InventoryServiceImpl.java (MANDATORY)
+#
+# Transactions are invisible over HTTP — you verify them by their side effects.
+# Most requests below pair with a psql query; run both.
+###############################################################################
+
+@base = {{host}}/api/v1/orders
+
+###############################################################################
+# REQUIRED (default) + MANDATORY + REQUIRES_NEW in one request
+#
+# createOrder is @Transactional (REQUIRED). Inside it:
+#   inventoryService.reserveInventoryItems  → MANDATORY  (joins the caller's tx)
+#   auditService.logOrderCreated            → REQUIRES_NEW (its own tx, commits
+#                                              independently of the caller)
+###############################################################################
+
+### 1 · Happy path — one HTTP call, three propagation behaviours
+# Expect: 201
+# Then check the audit row landed:
+#   psql -h localhost -U postgres -d orderdb \
+#     -c "SELECT * FROM order_audit_log ORDER BY id DESC LIMIT 3;"
+# @name txOrder
+POST {{base}}
+Content-Type: application/json
+
+{
+  "customerName": "Tx Tina",
+  "customerEmail": "tina@example.com",
+  "items": [{ "productName": "Widget", "quantity": 1, "unitPrice": 50.00 }]
+}
+
+###############################################################################
+# NESTED (savepoints) — /batch
+#
+# createOrdersBatch is one outer transaction; each order is created through
+# OrderNestedTransactionHelper#createOrderWithSavepoint (Propagation.NESTED).
+# A failure rolls back to that order's savepoint only — its siblings survive.
+# The response is a per-item result list, not all-or-nothing.
+#
+# Requires savepoint support: JDBC (Postgres) — fine. JPA/Hibernate transaction
+# manager must not be configured with nestedTransactionAllowed = false.
+###############################################################################
+
+### 2 · Batch where all three succeed
+# Expect: 200, three results with success = true
+POST {{base}}/batch
+Content-Type: application/json
+
+[
+  {
+    "customerName": "Batch One",
+    "customerEmail": "one@example.com",
+    "items": [{ "productName": "Widget", "quantity": 1, "unitPrice": 10.00 }]
+  },
+  {
+    "customerName": "Batch Two",
+    "customerEmail": "two@example.com",
+    "items": [{ "productName": "Widget", "quantity": 2, "unitPrice": 10.00 }]
+  },
+  {
+    "customerName": "Batch Three",
+    "customerEmail": "three@example.com",
+    "items": [{ "productName": "Widget", "quantity": 3, "unitPrice": 10.00 }]
+  }
+]
+
+### 3 · Batch with a POISONED middle item — the savepoint payoff
+# Item 2 orders 5 of a product with only 2 in stock. Seed it first:
+#   psql -h localhost -U postgres -d orderdb \
+#     -c "INSERT INTO products (name, stock) VALUES ('Limited Widget', 2)
+#         ON CONFLICT (name) DO UPDATE SET stock = 2;"
+#
+# Expect: 200 with results[0].success = true, results[1].success = false
+# (errorMessage mentions insufficient stock), results[2].success = true.
+# Without NESTED, the whole batch would have rolled back.
+# Confirm orders 0 and 2 actually persisted — that's the real assertion:
+#   psql … -c "SELECT id, customer_name FROM orders WHERE customer_email LIKE 'savepoint%';"
+POST {{base}}/batch
+Content-Type: application/json
+
+[
+  {
+    "customerName": "Savepoint Survivor A",
+    "customerEmail": "savepoint-a@example.com",
+    "items": [{ "productName": "Widget", "quantity": 1, "unitPrice": 10.00 }]
+  },
+  {
+    "customerName": "Savepoint Doomed",
+    "customerEmail": "savepoint-doomed@example.com",
+    "items": [{ "productName": "Limited Widget", "quantity": 5, "unitPrice": 10.00 }]
+  },
+  {
+    "customerName": "Savepoint Survivor B",
+    "customerEmail": "savepoint-b@example.com",
+    "items": [{ "productName": "Widget", "quantity": 1, "unitPrice": 10.00 }]
+  }
+]
+
+### 4 · Does @Valid cascade into a List<T> request body?
+# The signature is @Valid @RequestBody List<OrderRequest>, NOT List<@Valid OrderRequest>.
+# Element-level constraints may therefore be skipped entirely — meaning a blank
+# customerName reaches the DB and fails on a NOT NULL constraint instead of
+# returning a clean 400. Run it and see which you get; that's the lesson.
+# Expect: 400 (validation) OR 200 with results[0].success = false (DB-level failure)
+POST {{base}}/batch
+Content-Type: application/json
+
+[
+  {
+    "customerName": "",
+    "customerEmail": "not-an-email",
+    "items": []
+  }
+]
+
+###############################################################################
+# OPTIMISTIC LOCKING — @Version on Order
+#
+# updateOrder loads the row, mutates it, saves. Hibernate appends
+# "WHERE id = ? AND version = ?"; 0 rows updated → OptimisticLockingFailureException
+# → wrapped as ConcurrentModificationException → 409 via handleConflict.
+#
+# You cannot lose this race from a single sequential .http file — each PUT
+# reloads a fresh version. You need two writers overlapping in time.
+###############################################################################
+
+### 5 · Sequential PUTs never conflict — version just increments
+# Send this twice. Both return 200. Check the version column climbing:
+#   psql … -c "SELECT id, version, last_updated FROM orders WHERE id = <id>;"
+# Expect: 200
+PUT {{base}}/{{txOrder.response.body.$.id}}
+Content-Type: application/json
+
+{
+  "customerName": "Tx Tina v2",
+  "customerEmail": "tina@example.com",
+  "items": [{ "productName": "Widget", "quantity": 2, "unitPrice": 50.00 }]
+}
+
+###############################################################################
+# 6 · Forcing the 409 — two concurrent writers
+#
+# Option A: bump the version behind the app's back, mid-request. Hard to time.
+#
+# Option B (reliable): fire N concurrent PUTs from a shell and count the 409s.
+# Replace ID with the id from request 1.
+#
+#   ID=1
+#   BODY='{"customerName":"Racer","customerEmail":"race@example.com","items":[{"productName":"Widget","quantity":1,"unitPrice":50.00}]}'
+#   for i in $(seq 1 20); do
+#     curl -s -o /dev/null -w "%{http_code}\n" \
+#       -X PUT "http://localhost:8080/api/v1/orders/$ID" \
+#       -H 'Content-Type: application/json' -d "$BODY" &
+#   done | sort | uniq -c
+#
+# Expect: a mix of 200 and 409. The 409 body is
+#   "The record was modified by another user. Please refresh and retry."
+# — a deliberately generic message; the raw exception never reaches the client.
+###############################################################################
+
+### 6 · Read the row after the race to see the surviving version
+# Expect: 200 (version isn't in OrderResponse — check the DB column directly)
+GET {{base}}/{{txOrder.response.body.$.id}}
+
+###############################################################################
+# PESSIMISTIC LOCKING — SELECT … FOR UPDATE
+#
+# ProductRepository#findByNameForUpdate is @Lock(PESSIMISTIC_WRITE). Every
+# createOrder that touches a tracked product serialises on that row: the second
+# transaction BLOCKS at the database until the first commits. No exception, no
+# retry — just waiting. That's the trade-off vs optimistic locking.
+###############################################################################
+
+### 7 · Two concurrent orders for the same tracked product
+# Seed 100 units first:
+#   psql … -c "INSERT INTO products (name, stock) VALUES ('Hot Item', 100)
+#              ON CONFLICT (name) DO UPDATE SET stock = 100;"
+#
+# Then hammer it concurrently and confirm stock ends at exactly 100 - N
+# (no lost updates — that's what the row lock guarantees):
+#
+#   for i in $(seq 1 20); do
+#     curl -s -o /dev/null -X POST http://localhost:8080/api/v1/orders \
+#       -H 'Content-Type: application/json' \
+#       -d '{"customerName":"Racer","customerEmail":"race@example.com","items":[{"productName":"Hot Item","quantity":1,"unitPrice":5.00}]}' &
+#   done; wait
+#   psql … -c "SELECT stock FROM products WHERE name = 'Hot Item';"   # → 80
+#
+# Expect: 201
+POST {{base}}
+Content-Type: application/json
+
+{
+  "customerName": "Lock Larry",
+  "customerEmail": "larry@example.com",
+  "items": [{ "productName": "Hot Item", "quantity": 1, "unitPrice": 5.00 }]
+}
+
+###############################################################################
+# ISOLATION LEVELS
+#   calculateRevenueBetween → @Transactional(isolation = REPEATABLE_READ)
+#   InventoryService#allocateLastUnit → @Transactional(isolation = SERIALIZABLE)
+###############################################################################
+
+### 8 · REPEATABLE_READ aggregate
+# Both reads inside this transaction see the same snapshot, so a concurrent
+# insert can't produce a torn total. Under READ_COMMITTED it could.
+# Expect: 200, a number
+GET {{base}}/revenue?date={{today}}
+
+### 9 · Rollback semantics — the audit trail should survive a failed create
+# @Transactional rolls back on RuntimeException by default. The audit write is
+# REQUIRES_NEW, so it commits on its own; unchecked exceptions in the OUTER
+# transaction don't undo it. Fire the insufficient-stock case from task 2 (#12),
+# then check whether an audit row exists for it:
+#   psql … -c "SELECT * FROM order_audit_log ORDER BY id DESC LIMIT 5;"
+# For this path the audit call sits AFTER the failure point, so expect no row —
+# the interesting question is what happens when it sits before.
+# Expect: 422
+POST {{base}}
+Content-Type: application/json
+
+{
+  "customerName": "Rollback Rita",
+  "customerEmail": "rita@example.com",
+  "items": [{ "productName": "Limited Widget", "quantity": 999, "unitPrice": 10.00 }]
+}

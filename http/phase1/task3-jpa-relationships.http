@@ -1,0 +1,123 @@
+###############################################################################
+# Phase 1 · Task 3 — JPA Entities, Relationships, HikariCP, @Transactional
+# Doc: docs/phase1_task3.md
+# Code: model/Order.java, model/OrderItem.java
+#
+# Order → OrderItem is @OneToMany(cascade = ALL, orphanRemoval = true, LAZY),
+# bidirectional via OrderItem.order. Watch what that buys you below.
+###############################################################################
+
+@base = {{host}}/api/v1/orders
+
+### 1 · Cascade persist — one POST writes parent + 3 children
+# You never create OrderItems yourself; CascadeType.ALL + addItem() does it.
+# Expect: 201, items[] has 3 entries, each with a generated id.
+# totalAmount = 1200.00 + (2 × 25.50) + (3 × 15.00) = 1296.00 — computed server-side.
+# @name multiItem
+POST {{base}}
+Content-Type: application/json
+
+{
+  "customerName": "Cascade Carla",
+  "customerEmail": "carla@example.com",
+  "items": [
+    { "productName": "Monitor",  "quantity": 1, "unitPrice": 1200.00 },
+    { "productName": "Keyboard", "quantity": 2, "unitPrice": 25.50 },
+    { "productName": "Cable",    "quantity": 3, "unitPrice": 15.00 }
+  ]
+}
+
+### 2 · Read it back — LAZY items are still materialised in the response
+# open-in-view is FALSE in application.yml, so the service must have loaded items
+# inside the transaction (JOIN FETCH / entity graph). If you ever see
+# LazyInitializationException here, that's the setting biting.
+# Expect: 200 with all 3 items
+GET {{base}}/{{multiItem.response.body.$.id}}
+
+### 3 · Orphan removal — PUT with fewer items deletes the missing rows
+# Drop from 3 items to 1. orphanRemoval = true issues DELETEs for the other two;
+# without it you'd get an "A collection with cascade=all-delete-orphan was no longer
+# referenced" error or orphaned rows with a null FK.
+# Expect: 200, items[] has exactly 1 entry, totalAmount = 1200.00
+PUT {{base}}/{{multiItem.response.body.$.id}}
+Content-Type: application/json
+
+{
+  "customerName": "Cascade Carla",
+  "customerEmail": "carla@example.com",
+  "items": [
+    { "productName": "Monitor", "quantity": 1, "unitPrice": 1200.00 }
+  ]
+}
+
+### 4 · Confirm the orphans are really gone
+# Expect: 200, still exactly 1 item
+GET {{base}}/{{multiItem.response.body.$.id}}
+
+### 5 · Grow the collection back — cascade works on update too
+# Expect: 200, 2 items, totalAmount = 1200.00 + (10 × 15.00) = 1350.00
+PUT {{base}}/{{multiItem.response.body.$.id}}
+Content-Type: application/json
+
+{
+  "customerName": "Cascade Carla",
+  "customerEmail": "carla@example.com",
+  "items": [
+    { "productName": "Monitor", "quantity": 1,  "unitPrice": 1200.00 },
+    { "productName": "Cable",   "quantity": 10, "unitPrice": 15.00 }
+  ]
+}
+
+### 6 · @CreationTimestamp vs @UpdateTimestamp
+# After request 5, orderDate should be UNCHANGED (updatable = false) but
+# lastUpdated should have moved. Compare against the response of request 1.
+# Expect: 200
+GET {{base}}/{{multiItem.response.body.$.id}}
+
+### 7 · Cascade delete — removing the parent removes the children
+# Expect: 204. Verify no orphan rows survive:
+#   psql -h localhost -U postgres -d orderdb -c "SELECT count(*) FROM order_items WHERE order_id IS NULL;"
+DELETE {{base}}/{{multiItem.response.body.$.id}}
+
+### 8 · Precision — BigDecimal(10,2), never double
+# 0.1 + 0.2 problems don't exist here. 3 × 33.33 = 99.99 exactly.
+# Expect: 201, totalAmount = 99.99
+POST {{base}}
+Content-Type: application/json
+
+{
+  "customerName": "Precision Pete",
+  "customerEmail": "pete@example.com",
+  "items": [{ "productName": "Widget", "quantity": 3, "unitPrice": 33.33 }]
+}
+
+### 9 · Unique constraint on order_number — generated, never client-supplied
+# Send two identical bodies back to back: both succeed with DIFFERENT orderNumbers.
+# Expect: 201 twice. (POST is not idempotent — that's the point.)
+POST {{base}}
+Content-Type: application/json
+
+{
+  "customerName": "Duplicate Dan",
+  "customerEmail": "dan@example.com",
+  "items": [{ "productName": "Widget", "quantity": 1, "unitPrice": 10.00 }]
+}
+
+###############################################################################
+# HikariCP — the pool behind all of the above
+#   application.yml: maximum-pool-size 10, minimum-idle 5, leak-detection 60s
+###############################################################################
+
+### 10 · Live pool metrics — connections in use vs idle
+# Expect: 200. Fire a few requests above first, then watch .measurements[].value
+GET {{host}}/actuator/metrics/hikaricp.connections.active
+
+###
+GET {{host}}/actuator/metrics/hikaricp.connections.idle
+
+###
+GET {{host}}/actuator/metrics/hikaricp.connections.pending
+
+### 11 · How long acquiring a connection takes
+# Expect: 200. If pending > 0 and this climbs, the pool is your bottleneck.
+GET {{host}}/actuator/metrics/hikaricp.connections.acquire

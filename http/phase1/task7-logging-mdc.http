@@ -1,0 +1,176 @@
+###############################################################################
+# Phase 1 · Task 7 — SLF4J, MDC, Correlation IDs, Logback, Async Appenders
+# Doc: docs/phase1_task7.md
+# Code: filter/MDCFilter.java, util/LoggingUtils.java, resources/logback-spring.xml
+#
+# MDCFilter runs before every request and populates the MDC with:
+#   correlationId  ← X-Correlation-ID header, or "REQ-<uuid>" if you don't send one
+#   userId         ← X-User-ID header (only if present)
+#   method, path, ipAddress (ipAddress honours X-Forwarded-For)
+# and echoes X-Correlation-ID back on the RESPONSE. MDC.clear() in a finally
+# block — mandatory, because thread-pool threads are reused.
+#
+# Log destinations (logback-spring.xml, LOG_PATH = order-service/logs):
+#   CONSOLE            …[%X{correlationId:-}] [%X{userId:-}]…
+#   order-service.log             — JSON, includes the correlationId MDC key
+#   order-service-error.log       — ERROR only
+#   order-service-performance.log — timings
+#   order-service-audit.log       — JSON audit trail
+#   ASYNC_FILE / ASYNC_AUDIT      — AsyncAppender wrappers (bounded queue,
+#                                   logging never blocks the request thread)
+#
+# Watch the logs while you send these:
+#   tail -f order-service/logs/order-service.log | grep TRACE-ME
+###############################################################################
+
+@base = {{host}}/api/v1/orders
+
+### 1 · No header — the server mints one
+# Look at the RESPONSE HEADERS pane: X-Correlation-ID: REQ-<uuid>.
+# Every log line for this request carries that same id.
+# Expect: 200
+GET {{base}}?page=0&size=1
+
+### 2 · Client-supplied correlation id — the server echoes it back verbatim
+# This is how a trace survives across service boundaries: the caller generates
+# the id once, every downstream hop reuses it.
+# Expect: 200, response header X-Correlation-ID: TRACE-ME-0001
+GET {{base}}?page=0&size=1
+X-Correlation-ID: TRACE-ME-0001
+
+### 3 · Same id across DIFFERENT endpoints — one logical operation, one trace
+# Send 3, 4 and 5 back to back, then:
+#   grep TRACE-ME-0002 order-service/logs/order-service.log
+# You should see the whole story: create → read → search, in order.
+# Expect: 201
+POST {{base}}
+Content-Type: application/json
+X-Correlation-ID: TRACE-ME-0002
+
+{
+  "customerName": "Traced Tracy",
+  "customerEmail": "tracy@example.com",
+  "items": [{ "productName": "Widget", "quantity": 1, "unitPrice": 10.00 }]
+}
+
+### 4 · Second hop, same correlation id
+# Expect: 200
+GET {{base}}?customerEmail=tracy@example.com
+X-Correlation-ID: TRACE-ME-0002
+
+### 5 · Third hop, same correlation id
+# Expect: 200
+GET {{base}}/summaries
+X-Correlation-ID: TRACE-ME-0002
+
+### 6 · userId in the MDC too
+# X-User-ID only enters the MDC when non-blank — the log pattern renders
+# [%X{userId:-}] as empty brackets otherwise. Compare a line from this request
+# with one from request 1.
+# Expect: 200
+GET {{base}}?page=0&size=1
+X-Correlation-ID: TRACE-ME-0003
+X-User-ID: yugam-42
+
+### 7 · Blank header values are ignored, not propagated
+# An empty X-Correlation-ID falls back to a generated REQ-<uuid> —
+# check the response header, it will NOT be blank.
+# Expect: 200
+GET {{base}}?page=0&size=1
+X-Correlation-ID:
+X-User-ID:
+
+### 8 · X-Forwarded-For wins over the socket address
+# ipAddress in the MDC should read 203.0.113.7 (the first entry), not 127.0.0.1.
+# This is why a proxied app that logs remoteAddr logs the load balancer forever.
+# Expect: 200
+GET {{base}}?page=0&size=1
+X-Correlation-ID: TRACE-ME-0004
+X-Forwarded-For: 203.0.113.7, 10.0.0.1
+
+### 9 · Email masking — PII must not reach the logs
+# OrderServiceImpl logs LoggingUtils.maskEmail(...), not the raw address.
+# After sending, prove it:
+#   grep -c "pii-victim@example.com" order-service/logs/order-service.log   # → 0
+#   grep TRACE-ME-0005 order-service/logs/order-service.log                 # → masked form
+# Expect: 201
+POST {{base}}
+Content-Type: application/json
+X-Correlation-ID: TRACE-ME-0005
+
+{
+  "customerName": "PII Pat",
+  "customerEmail": "pii-victim@example.com",
+  "items": [{ "productName": "Widget", "quantity": 1, "unitPrice": 10.00 }]
+}
+
+### 10 · Error path — the correlation id reaches the ERROR log too
+# GlobalExceptionHandler logs at ERROR, so this lands in order-service-error.log
+# WITH the id attached. That's the whole point: a user reports an error, you ask
+# for their correlation id, you find every line of their request.
+#   grep TRACE-ME-0006 order-service/logs/order-service-error.log
+# Expect: 404
+GET {{base}}/9999999
+X-Correlation-ID: TRACE-ME-0006
+
+### 11 · Validation error — ERROR log again, same trace
+# Expect: 400
+POST {{base}}
+Content-Type: application/json
+X-Correlation-ID: TRACE-ME-0007
+
+{
+  "customerName": "",
+  "customerEmail": "nope",
+  "items": []
+}
+
+### 12 · Request timing — "Completed: status=…, duration=…ms"
+# MDCFilter logs a Completed line for every request, and a WARN
+# "SLOW REQUEST" above 1000ms. A big page is the easiest way to push the timing up.
+#   grep TRACE-ME-0008 order-service/logs/order-service-performance.log
+# Expect: 200
+GET {{base}}?page=0&size=100
+X-Correlation-ID: TRACE-ME-0008
+
+### 13 · Audit trail — AuditService writes to the audit appender AND the DB
+# After this, check both:
+#   grep TRACE-ME-0009 order-service/logs/order-service-audit.log
+#   psql -h localhost -U postgres -d orderdb -c "SELECT * FROM order_audit_log ORDER BY id DESC LIMIT 3;"
+# Expect: 201
+POST {{base}}
+Content-Type: application/json
+X-Correlation-ID: TRACE-ME-0009
+
+{
+  "customerName": "Audited Amy",
+  "customerEmail": "amy@example.com",
+  "items": [{ "productName": "Widget", "quantity": 1, "unitPrice": 10.00 }]
+}
+
+### 14 · MDC leakage check — reused threads must not inherit a stale id
+# Fire 12 requests with distinct ids, then verify no line carries an id that
+# doesn't belong to its request. MDC.clear() in MDCFilter's finally block is
+# what prevents this; delete it and this test starts failing intermittently.
+#   for i in $(seq 1 12); do
+#     curl -s -o /dev/null -H "X-Correlation-ID: LEAK-$i" \
+#       "http://localhost:8080/api/v1/orders?page=0&size=1"
+#   done
+#   grep -c "LEAK-" order-service/logs/order-service.log
+# Expect: 200
+GET {{base}}?page=0&size=1
+X-Correlation-ID: LEAK-CANARY
+
+### 15 · Async appender under load — logging must not be the bottleneck
+# ASYNC_FILE wraps the file appenders in a bounded queue. Under a burst, the
+# request thread hands off and returns immediately; if the queue fills, logback
+# drops events by its discardingThreshold rather than blocking.
+#   for i in $(seq 1 200); do
+#     curl -s -o /dev/null -H "X-Correlation-ID: BURST-$i" \
+#       "http://localhost:8080/api/v1/orders?page=0&size=20" &
+#   done; wait
+#   grep -c "BURST-" order-service/logs/order-service.log
+# Fewer lines than requests = events were discarded, which is the design working.
+# Expect: 200
+GET {{base}}?page=0&size=20
+X-Correlation-ID: BURST-CANARY

@@ -150,6 +150,42 @@ class OrderRequestValidationTest {
         assertThat(validate(item).isEmpty()).isEqualTo(expectedValid);
     }
 
+    /**
+     * The range on quantity comes from the custom {@code @ValidOrderQuantity}
+     * constraint, not from @Min/@Max. OrderQuantityValidator suppresses the
+     * annotation's default message and builds its own, so both out-of-range
+     * ends report the same text — asserting on it is what proves the
+     * ConstraintValidator is actually wired to the field.
+     */
+    @ParameterizedTest(name = "quantity={0} -> custom message")
+    @ValueSource(ints = {0, -1, 1001})
+    void outOfRangeQuantity_usesCustomValidatorMessage(int quantity) {
+        OrderItemRequest item = TestData.itemRequest("Laptop", quantity, "2999.00");
+
+        assertThat(validate(item))
+                .singleElement()
+                .satisfies(violation -> {
+                    assertThat(violation.getPropertyPath().toString()).isEqualTo("quantity");
+                    assertThat(violation.getMessage())
+                            .isEqualTo("Quantity must be between 1 and 1000");
+                });
+    }
+
+    /** isValid() returns true for null so only @NotNull fires — never both. */
+    @Test
+    void nullQuantity_reportsOnlyNotNull() {
+        OrderItemRequest item = OrderItemRequest.builder()
+                .productName("Laptop")
+                .quantity(null)
+                .unitPrice(new BigDecimal("2999.00"))
+                .build();
+
+        assertThat(validate(item))
+                .singleElement()
+                .satisfies(violation -> assertThat(violation.getMessage())
+                        .isEqualTo("Quantity is required"));
+    }
+
     @ParameterizedTest(name = "unitPrice={0} -> valid={1}")
     @CsvSource({
             "0.01,       true",

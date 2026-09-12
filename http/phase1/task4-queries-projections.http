@@ -1,0 +1,179 @@
+###############################################################################
+# Phase 1 · Task 4 — Specifications, Projections, Pagination, JOIN FETCH
+# Doc: docs/phase1_task4.md
+# Code: specification/OrderSpecification.java, repository/OrderRepository.java
+#
+# GET /api/v1/orders builds a Specification from whatever params you send.
+# Every predicate is null-safe (cb.conjunction() when the param is absent),
+# so the same endpoint serves "list everything" and "narrow search".
+###############################################################################
+
+@base = {{host}}/api/v1/orders
+
+###############################################################################
+# Seed — run these three so the filters below have something to bite on
+###############################################################################
+
+### Seed A · cheap PENDING order for alice
+POST {{base}}
+Content-Type: application/json
+
+{
+  "customerName": "Alice",
+  "customerEmail": "alice@example.com",
+  "items": [{ "productName": "Mouse", "quantity": 1, "unitPrice": 25.00 }]
+}
+
+### Seed B · mid-priced order for alice
+POST {{base}}
+Content-Type: application/json
+
+{
+  "customerName": "Alice",
+  "customerEmail": "alice@example.com",
+  "items": [{ "productName": "Monitor", "quantity": 2, "unitPrice": 249.00 }]
+}
+
+### Seed C · expensive order for bob
+POST {{base}}
+Content-Type: application/json
+
+{
+  "customerName": "Bob",
+  "customerEmail": "bob@example.com",
+  "items": [
+    { "productName": "Laptop",  "quantity": 1, "unitPrice": 2499.00 },
+    { "productName": "Docking Station", "quantity": 1, "unitPrice": 199.00 }
+  ]
+}
+
+###############################################################################
+# Specifications — composable predicates
+###############################################################################
+
+### 1 · No filters at all — every predicate collapses to a tautology
+# Expect: 200, all orders. This is the "1=1" case, and it's why null-safe specs matter.
+GET {{base}}
+
+### 2 · One filter — customerEmail
+# Expect: 200, only alice's orders (seeds A and B)
+GET {{base}}?customerEmail=alice@example.com
+
+### 3 · One filter — status enum (binds by name)
+# Valid: PENDING, CONFIRMED, PROCESSING, SHIPPED, DELIVERED, CANCELLED, REFUNDED
+# Expect: 200
+GET {{base}}?status=PENDING
+
+### 4 · Range, both bounds — cb.between
+# Expect: 200, only seed B (498.00)
+GET {{base}}?minAmount=100&maxAmount=1000
+
+### 5 · Range, lower bound only — cb.greaterThanOrEqualTo
+# Expect: 200, seed C only (2698.00)
+GET {{base}}?minAmount=1000
+
+### 6 · Range, upper bound only — cb.lessThanOrEqualTo
+# Expect: 200, seed A only (25.00)
+GET {{base}}?maxAmount=100
+
+### 7 · All predicates ANDed together
+# Expect: 200, seed B. Watch the generated SQL — one WHERE with three conditions,
+# not three queries.
+GET {{base}}?customerEmail=alice@example.com&status=PENDING&minAmount=100&maxAmount=1000
+
+### 8 · Filters that match nothing
+# Expect: 200 with content:[] and totalElements:0 — NOT a 404. An empty
+# collection is a valid result for a search.
+GET {{base}}?customerEmail=nobody@example.com
+
+###############################################################################
+# Pagination + sorting — Pageable is resolved straight from query params
+#   page (0-based), size, sort=<property>,<asc|desc>
+#   Sort by ENTITY property names: orderDate, totalAmount, customerName,
+#   customerEmail, status, orderNumber, id — not column names.
+###############################################################################
+
+### 9 · First page, 2 per page
+# Expect: 200, content.length = 2, and metadata: totalElements, totalPages,
+# number, size, first, last
+GET {{base}}?page=0&size=2
+
+### 10 · Second page — same query, different offset
+# Expect: 200, number = 1, and content differs from request 9
+GET {{base}}?page=1&size=2
+
+### 11 · Sort by amount, most expensive first
+# Expect: 200, content[0].totalAmount is the largest
+GET {{base}}?page=0&size=20&sort=totalAmount,desc
+
+### 12 · Newest first
+# Expect: 200
+GET {{base}}?page=0&size=20&sort=orderDate,desc
+
+### 13 · Multi-sort — repeat the sort param, order matters
+# Expect: 200, grouped by customerName ascending, then newest first within each
+GET {{base}}?page=0&size=20&sort=customerName,asc&sort=orderDate,desc
+
+### 14 · Page beyond the end
+# Expect: 200, content:[], and totalElements still reports the real total
+GET {{base}}?page=999&size=20
+
+### 15 · Filter + sort + page together
+# Expect: 200
+GET {{base}}?customerEmail=alice@example.com&page=0&size=5&sort=totalAmount,desc
+
+###############################################################################
+# Projections — three ways to avoid hydrating the whole entity
+###############################################################################
+
+### 16 · Interface projection (findAllBy → OrderSummary)
+# Spring generates a JDK proxy. SQL selects only id, order_number, total_amount,
+# status. No join to order_items at all.
+# Expect: 200, array of {id, orderNumber, totalAmount, status}
+GET {{base}}/summaries
+
+### 17 · Class/DTO projection (JPQL constructor expression → OrderSummaryDTO)
+# "SELECT new com.ecommerce…OrderSummaryDTO(o.id, o.orderNumber, o.totalAmount)"
+# Fewest columns of the three — the fastest option for list views.
+# Expect: 200, array of {id, orderNumber, totalAmount}
+GET {{base}}/summary-report
+
+### 18 · Aggregate projection (GROUP BY / COUNT → OrderWithItemCount)
+# One query returns the item count per order. Compare with fetching every order
+# plus its items just to call items.size() — that's the task 6 lesson.
+# Expect: 200, array of {id, orderNumber, itemCount}
+GET {{base}}/item-counts
+
+###############################################################################
+# JOIN FETCH / entity graph — the single-order read paths
+###############################################################################
+
+### 19 · findByIdWithItems — explicit "LEFT JOIN FETCH o.items"
+# One SQL statement returns the order AND its items.
+# Expect: 200 with items populated
+GET {{base}}/{{orderId}}
+
+### 20 · findWithItemsByOrderNumber — @EntityGraph("Order.withItems")
+# Declarative equivalent of #19. Same SQL, no JPQL string.
+# Edit the order number to one you actually have (see request 16).
+# Expect: 200 with items populated
+GET {{base}}/by-number/{{orderNumber}}
+
+###############################################################################
+# Aggregate query — SUM with COALESCE
+###############################################################################
+
+### 21 · Revenue for today (yyyy-MM-dd)
+# sumTotalAmountBetween uses COALESCE(SUM(...), 0), so a day with no orders
+# returns 0 rather than null.
+# Expect: 200, a bare number
+GET {{base}}/revenue?date={{today}}
+
+### 22 · Revenue for a day with no orders
+# Expect: 200, 0 — this is what COALESCE buys you
+GET {{base}}/revenue?date=1999-01-01
+
+### 23 · Malformed date — LocalDate.parse blows up
+# Expect: 500 via handleAll (DateTimeParseException isn't specifically handled).
+# Arguably should be a 400 — a good candidate for a handler you add yourself.
+GET {{base}}/revenue?date=not-a-date
