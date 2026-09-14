@@ -61,6 +61,35 @@
 
 ---
 
+## 🧵 PHASE 2B: Java Multithreading Foundations ⭐⭐⭐
+
+> **Goal:** The layer *underneath* Spring's async abstraction — what a thread
+> is, what the JVM guarantees about memory, and why the bugs happen.
+> **Module:** `concurrency-lab/` (standalone, Java 21). **Docs:** `docs/02-concurrency/`
+
+| # | Topic | Demos | Exercises | Time | Status |
+|---|------|-------|-----------|------|--------|
+| A | Threads, lifecycle, interruption & cancellation | D1–D3 | Ex4 | 1.5hr | ✅ |
+| B | Java Memory Model: visibility, reordering, safe publication | D4–D6 | Ex2 | 2hr | ✅ |
+| C | Races, atomicity, CAS, ABA, LongAdder | D7–D9 | Ex1, Ex3 | 2hr | ✅ |
+| D | Locks, deadlock, ReadWriteLock, Condition | D10–D12 | Ex5, Ex6, Ex7 | 2.5hr | ✅ |
+| E | Executors internals, ThreadLocal, concurrent collections | — | — | 2hr | ⬜ |
+| F | Coordination: latches, barriers, semaphores, phasers | — | — | 1.5hr | ⬜ |
+| G | ForkJoinPool, work-stealing, parallel streams | — | — | 1.5hr | ⬜ |
+| H | Virtual threads & structured concurrency (Java 21) | — | — | 2hr | ⬜ |
+| I | Diagnostics: thread dumps, jcmd, JFR, false sharing | — | — | 1.5hr | ⬜ |
+
+**Built so far:** 12 runnable demos that visibly misbehave (a loop that never
+exits, 92% memory-reordering anomalies, a self-inflicted deadlock the JVM
+detects, a `HashMap` that spins forever) + 7 broken exercises with contract
+tests that fail until fixed. 16 reference tests all green.
+
+```bash
+cd concurrency-lab && ./mvnw test -Dtest=ExerciseTests
+```
+
+---
+
 ## 🔄 PHASE 3: Testing ⭐⭐⭐
 
 > **Goal:** Complete test suite with 80%+ coverage
@@ -76,7 +105,7 @@
 
 **Phase Total: ~6 hours | What You Built:** 73 passing unit/slice tests on `mvn test`,
 31 more container-backed tests wired to `mvn verify`, JaCoCo enforcing 0.80 line coverage
-on the classes under test. See `phase3_tasks13_to_18.md` for the file map and the local
+on the classes under test. See `05-testing.md` for the file map and the local
 Docker blocker.
 
 ---
@@ -352,14 +381,15 @@ order-service/
 
 ## 📚 TASK DETAIL REFERENCE
 
-Each task was covered with:
-1. **Concept deep dive** (theory + interview Q&A)
-2. **Step-by-step implementation** (production-grade code)
-3. **Test cases** (curl commands + expected output)
-4. **Completion checklist**
-5. **Interview questions you can now answer**
+Every task/phase doc in `docs/` now follows the **5-zone learning format**
+(see `docs/02-concurrency/README.md` for the method): ⚡ Core Card (60-second essence) →
+🔮 Predict First (answer before reading) → 📖 Story → 🎯 Retrieval Gym
+(hidden answers, self-test) → 🃏 Flashcards + 🗓 spaced Revision Log.
 
-Tasks 1–11 are fully documented in the learning chat session.
+Revision aids live in `docs/revision/`:
+- `cheatsheet.md` — all Core Cards on one page (~25 min full-curriculum skim)
+- `flashcards.md` — master deck, Anki-importable
+- `mock_interview.md` — 25 interleaved cross-phase questions, scored
 
 ---
 

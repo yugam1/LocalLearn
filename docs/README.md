@@ -1,110 +1,151 @@
-# 📚 LocalLearn — Spring Boot Production Learning Plan
+# 📚 LocalLearn — Spring Boot Production Learning System
 ## Master Index
 
+Every doc in this directory follows one learning format, engineered for
+retention, not just reference. Read this page once; it tells you how to learn
+from, and revise with, everything else.
+
 ---
 
-## 📁 Files in This Directory
+## 🧠 How every doc works (the 5 zones)
 
-### Plan Overview
+| Zone | Job | When you use it |
+|---|---|---|
+| **⚡ Core Card** | the 20% that carries 80% — mental model, one diagram, 5 rules | every revision pass, 60 seconds |
+| **🔮 Predict First** | puzzles you answer BEFORE reading (answers hidden) | first learn only — being wrong here is the point |
+| **📖 The Story** | the teaching narrative, failure-first | first learn + when a gym question stumps you |
+| **🎯 Retrieval Gym** | questions with hidden answers, Tier 1 (must-know) / Tier 2 (depth) | every revision pass — answer ALOUD, then open |
+| **🗓 Revision Log** | spaced-repetition checkboxes: R1 +1d · R2 +3d · R3 +1w · R4 +3w | tick after each pass |
+
+Plus **🃏 Flashcards** (Anki-importable) and **🔗 Same Idea, Different Layer**
+(cross-links — one mental model recurring across layers is the retention
+engine: `@Version` ↔ CAS, bulkhead ↔ thread pools, isolation ↔ JMM).
+
+### The workflow
+
+- **First learn:** Predict First (commit to answers!) → Story → Gym same day → tick nothing yet.
+- **Revision pass (~6 min/topic):** Core Card + Gym only. Miss a question → reread only that Story section. Miss ≥2 Tier-1 → reset that topic to R1.
+- **Quick skim (pre-interview):** [`revision/cheatsheet.md`](revision/cheatsheet.md) — every Core Card on one page (~25 min for the whole curriculum).
+- **Interleaved test (every few weeks):** [`revision/mock_interview.md`](revision/mock_interview.md) — 25 shuffled cross-phase questions, scored.
+- **Micro-drills:** [`revision/flashcards.md`](revision/flashcards.md) — all decks, tab-separated for Anki import.
+
+---
+
+## 📁 Curriculum map
+
+Docs are organized by **topic, in learning order** — the numbered folders/files
+below ARE the path. (`plan.md` keeps the original phase/task numbering for
+progress tracking; the mapping is noted per topic.)
+
+### Plan & revision
 | File | Contents |
 |---|---|
-| `plan.md` | Full learning path, progress tracker, all 14 phases overview |
+| `plan.md` | Full learning path, progress tracker, all 14 phases |
+| `revision/cheatsheet.md` | **The one-page brain** — all Core Cards |
+| `revision/flashcards.md` | Master flashcard deck (Anki-ready) |
+| `revision/mock_interview.md` | 25-question interleaved mock, with scoring |
+
+### 01 · Foundations ✅ *(plan: Phase 1)*
+| File | Topics |
+|---|---|
+| [`01-di-ioc-rest-layers`](01-foundations/01-di-ioc-rest-layers.md) | DI/IoC, constructor injection, REST design, DTOs, layers |
+| [`02-exceptions-validation`](01-foundations/02-exceptions-validation.md) | @RestControllerAdvice, exception hierarchy, Bean Validation |
+| [`03-jpa-entities-relationships`](01-foundations/03-jpa-entities-relationships.md) | JPA entities, owning side, cascade/orphanRemoval, HikariCP |
+| [`04-repositories-queries-pagination`](01-foundations/04-repositories-queries-pagination.md) | Specifications, Page vs Slice, projections, paginated JOIN FETCH |
+| [`05-transactions-isolation-locking`](01-foundations/05-transactions-isolation-locking.md) | Propagation, isolation ladder, optimistic/pessimistic locking |
+| [`06-n-plus-one-hikaricp-tuning`](01-foundations/06-n-plus-one-hikaricp-tuning.md) | N+1 both directions, @BatchSize, Hibernate statistics, pool tuning |
+| [`07-logging-mdc-correlation-ids`](01-foundations/07-logging-mdc-correlation-ids.md) | Log levels, MDC, correlation IDs, Logback, async appenders |
+
+### 02 · 🧵 Concurrency foundations ✅ *(multithreading lab)*
+| File | The one thing |
+|---|---|
+| [`README`](02-concurrency/README.md) | Index + how to run the demos/exercises |
+| [`01-threads-lifecycle-interruption`](02-concurrency/01-threads-lifecycle-interruption.md) | Interruption is a **request**, not a kill |
+| [`02-jmm-visibility-happens-before`](02-concurrency/02-jmm-visibility-happens-before.md) | No happens-before edge → guaranteed **nothing** |
+| [`03-atomicity-races-cas`](02-concurrency/03-atomicity-races-cas.md) | `volatile` ≠ atomic; the gap in compound actions |
+| [`04-locks-deadlock-conditions`](02-concurrency/04-locks-deadlock-conditions.md) | Deadlock = two locks in **two orders** |
+
+Runnable code: **`concurrency-lab/`** (standalone, Java 21) — 12 demos that
+visibly misbehave + 7 broken exercises with contract tests.
+
+```bash
+cd concurrency-lab
+java -cp target/classes com.locallearn.concurrency.t03atomicity.D7_LostUpdates
+./mvnw test -Dtest=SolutionTests    # reference — all pass
+./mvnw test -Dtest=ExerciseTests    # yours — fail until fixed
+```
+
+### 03 · Async & scheduling in Spring ✅ *(plan: Phase 2, tasks 8–9)*
+| File | Topics |
+|---|---|
+| [`01-thread-pools-completablefuture`](03-async-and-scheduling/01-thread-pools-completablefuture.md) | Pool lifecycle (queue-before-grow!), sizing, rejection, CompletableFuture |
+| [`02-scheduling-shedlock`](03-async-and-scheduling/02-scheduling-shedlock.md) | fixedRate vs fixedDelay, cron, scheduler pool, ShedLock |
+
+### 04 · Kafka ✅ *(plan: Phase 2, tasks 10–11)*
+| File | Topics |
+|---|---|
+| [`01-fundamentals-partitions-groups`](04-kafka/01-fundamentals-partitions-groups.md) | Log-not-queue, partitions/keys/groups, acks, manual commit |
+| [`02-reliability-dlt-idempotency`](04-kafka/02-reliability-dlt-idempotency.md) | Rebalancing, DLT/@RetryableTopic, idempotency ledger, lag, replay |
+
+### 05 · Testing 🔄 *(plan: Phase 3)*
+| File | Topics |
+|---|---|
+| [`05-testing.md`](05-testing.md) | Mockito, @WebMvcTest, @DataJpaTest + TestContainers, Surefire/Failsafe split, JaCoCo |
+
+`mvn test` → 73 unit/slice tests. `mvn verify` → +31 container tests (Docker).
+
+### 06–16 · Remaining topics ⬜ *(plan: Phases 4–14; study-ready docs, same format)*
+| File | Topics |
+|---|---|
+| [`06-security.md`](06-security.md) | JWT flow, filter chain, RBAC, OAuth2, CORS/CSRF |
+| [`07-observability.md`](07-observability.md) | Actuator, Micrometer, Prometheus, tracing |
+| [`08-caching.md`](08-caching.md) | @Cacheable, Redis, Caffeine, stampede/penetration/avalanche |
+| [`09-resilience.md`](09-resilience.md) | Breaker states, retry+jitter, bulkhead, fallbacks |
+| [`10-microservices.md`](10-microservices.md) | Eureka, Gateway, Config, Feign, Saga, Outbox |
+| [`11-aop-proxies.md`](11-aop-proxies.md) | The proxy machinery revealed, custom annotations |
+| [`12-spring-advanced.md`](12-spring-advanced.md) | Scopes, conditionals, profiles, versioning |
+| [`13-database-advanced.md`](13-database-advanced.md) | Flyway, multi-tenancy, indexing, replicas |
+| [`14-api-documentation.md`](14-api-documentation.md) | SpringDoc, pagination contracts |
+| [`15-devops-docker-k8s.md`](15-devops-docker-k8s.md) | Docker multi-stage, Compose, K8s, CI/CD |
+| [`16-production-hardening.md`](16-production-hardening.md) | Feature flags, blue-green/canary, graceful shutdown |
 
 ---
 
-### Phase 1: Core Foundation ✅ COMPLETED
-| File | Tasks | Topics |
-|---|---|---|
-| `phase1_task1.md` | Task 1 | Project setup, REST API, DI, IoC, Layered architecture |
-| `phase1_task2.md` | Task 2 | Exception handling, @ControllerAdvice, Bean Validation |
-| `phase1_task3.md` | Task 3 | JPA entities, relationships, HikariCP, @Transactional basics |
-| `phase1_task4.md` | Task 4 | Specifications API, DTO projections, pagination, JOIN FETCH |
-| `phase1_task5.md` | Task 5 | Transaction propagation, isolation levels, optimistic/pessimistic locking |
-| `phase1_task6.md` | Task 6 | N+1 problem, @BatchSize, fetch types, Hibernate statistics |
-| `phase1_task7.md` | Task 7 | SLF4J, MDC, correlation IDs, Logback config, async appenders |
+## 🎯 Interview priority order
+
+**Must know:** 1️⃣ Foundations (01) · 2️⃣ Concurrency + async (02–03) · 3️⃣ Kafka (04) · 4️⃣ Testing (05) · 5️⃣ Security (06) · 6️⃣ Observability (07)
+**Should know:** Caching (08) · Resilience (09) · Microservices (10)
+**Good to know:** AOP (11) · Spring advanced (12) · Topics 13–16
+
+### Most-asked question → doc
+DI/IoC → `01-foundations/01` · N+1 → `01-foundations/06` · propagation → `01-foundations/05` ·
+MDC → `01-foundations/07` · pool sizing → `03-async-and-scheduling/01` · volatile vs atomic →
+`02-concurrency/03` · happens-before → `02-concurrency/02` · deadlock →
+`02-concurrency/04` · consumer groups → `04-kafka/01` · DLT → `04-kafka/02` ·
+JWT → `06-security` · circuit breaker → `09-resilience` · saga/outbox → `10-microservices` ·
+blue-green vs canary → `16-production-hardening`
 
 ---
 
-### Phase 2: Concurrency, Async & Messaging 🔄 IN PROGRESS
-| File | Tasks | Topics |
-|---|---|---|
-| `phase2_task8.md` | Task 8 | Thread pools, ThreadPoolTaskExecutor, @Async, CompletableFuture |
-| `phase2_task9.md` | Task 9 | @Scheduled, cron expressions, fixedRate vs fixedDelay, ShedLock |
-| `phase2_task10.md` | Task 10 | Kafka producer/consumer basics, topics, partitions, consumer groups |
-| `phase2_task11.md` | Task 11 | Kafka advanced: DLT, idempotency, batch consumer, offset management |
+## 🔑 Numbers & defaults to know cold
 
----
+**Formulas**
+- Thread pool (I/O-bound): `cores × (1 + wait/cpu)` · (CPU-bound): `cores + 1`
+- Connection pool: `(cores × 2) + spindles`
+- Queue size: `peak_RPS × avg_duration_s × safety`
 
-### Phase 3: Testing 🔄 IN PROGRESS
-| File | Tasks | Topics |
-|---|---|---|
-| `phase3_tasks13_to_18.md` | Tasks 16–21 | Mockito, @WebMvcTest, @DataJpaTest, TestContainers, parameterized tests, JaCoCo |
+**Defaults to override, always**
+- `@ManyToOne`/`@OneToOne` → `FetchType.LAZY`
+- `open-in-view` → `false`
+- `ddl-auto` → `none` in prod (Flyway)
+- Kafka `enable-auto-commit` → `false` (manual ack)
+- `@Scheduled` → custom `ThreadPoolTaskScheduler` (default = 1 thread!)
+- `@Enumerated` → `STRING` (never ORDINAL)
 
-`mvn test` → 73 unit/slice tests. `mvn verify` → adds 31 container-backed tests (needs Docker).
-
----
-
-### Phase 4–14: Remaining Phases ⬜ NOT STARTED
-| File | Phase | Topics |
-|---|---|---|
-| `phase4_tasks19_to_22.md` | 4 — Security | JWT, Spring Security, RBAC, OAuth2, CORS |
-| `phase5_tasks24_to_27.md` | 5 — Observability | Actuator, Micrometer, Prometheus, Zipkin |
-| `phase6_tasks28_to_30.md` | 6 — Caching | @Cacheable, Redis, Caffeine, multi-level cache |
-| `phase7_tasks31_to_34.md` | 7 — Resilience | Resilience4j, Circuit Breaker, Retry, Rate Limiting, Bulkhead |
-| `phase8_tasks35_to_41.md` | 8 — Microservices | Eureka, API Gateway, Config Server, Feign, Saga, Outbox |
-| `phase9_tasks42_to_43.md` | 9 — AOP | Aspects, Pointcuts, @Around, custom annotations |
-| `phase10_tasks44_to_47.md` | 10 — Advanced Spring | Bean scopes, @Conditional, Profiles, API versioning |
-| `phase11_tasks48_to_51.md` | 11 — DB Advanced | Flyway, multi-tenancy, indexing, read replicas |
-| `phase12_tasks52_to_53.md` | 12 — API Docs | SpringDoc/Swagger, pagination standards |
-| `phase13_tasks54_to_57.md` | 13 — DevOps | Docker multi-stage, Docker Compose, Kubernetes, CI/CD |
-| `phase14_tasks58_to_60.md` | 14 — Hardening | Feature flags, Blue-Green, Canary, Graceful shutdown |
-
----
-
-## 🎯 Interview Priority Order
-
-### Must Know (Do First):
-1. ✅ Phase 1 — All 7 tasks (REST, JPA, Transactions, Logging)
-2. ✅ Phase 2 — Tasks 8-11 (Thread pools, Scheduling, Kafka)
-3. 🔄 Phase 3 — Testing (Mockito, TestContainers)
-4. ⬜ Phase 4 — Security + JWT
-5. ⬜ Phase 5 — Actuator + Metrics
-
-### Should Know (Do Next):
-6. ⬜ Phase 6 — Redis caching
-7. ⬜ Phase 7 — Resilience4j
-8. ⬜ Phase 8 — Microservices + Spring Cloud
-
-### Good to Know:
-9. ⬜ Phase 9 — AOP
-10. ⬜ Phase 10 — Advanced Spring
-11. ⬜ Phase 11 — DB Advanced
-12. ⬜ Phases 12-14 — Docs, DevOps, Hardening
-
----
-
-## 🔑 Quick Interview Cheat Sheet
-
-### Most Asked Questions:
-- **DI/IoC** → phase1_task1.md
-- **N+1 problem** → phase1_task6.md
-- **@Transactional propagation** → phase1_task5.md
-- **MDC/Correlation IDs** → phase1_task7.md
-- **Thread pool sizing** → phase2_task8.md
-- **Kafka consumer groups** → phase2_task10.md
-- **DLT pattern** → phase2_task11.md
-- **JWT authentication** → phase4_tasks19_to_22.md
-- **Circuit breaker** → phase7_tasks31_to_34.md
-- **Blue-Green vs Canary** → phase14_tasks58_to_60.md
-
-### Key Formulas:
-- **Thread pool (I/O-bound):** `cores × (1 + wait_time/cpu_time)`
-- **Connection pool:** `(cores × 2) + effective_spindle_count`
-- **Batch size (Kafka):** `peak_RPS × avg_duration_s × safety_factor`
-
-### Key Defaults to Override:
-- `@ManyToOne` → always override to `FetchType.LAZY`
-- `open-in-view` → always `false`
-- `ddl-auto` → always `none` in prod (use Flyway)
-- `enable-auto-commit` (Kafka) → always `false` (manual ack)
-- `@Scheduled` pool → always configure custom ThreadPoolTaskScheduler
+**Rules of thumb**
+- `volatile` = visibility + ordering. **Never** atomicity of `x++`
+- Deadlock is never "two locks" — it's **two locks in two different orders**
+- Every `catch (InterruptedException)` → rethrow **or** restore the flag
+- Always `while (!condition) cond.await()` — never `if`
+- The proxy trap is ONE trap: @Transactional, @Async, @Cacheable, @PreAuthorize — `this.method()` bypasses them all
+- At-least-once is everywhere → idempotency (eventId ledger, unique index) is not optional
