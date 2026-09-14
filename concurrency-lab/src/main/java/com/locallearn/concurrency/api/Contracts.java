@@ -1,5 +1,7 @@
 package com.locallearn.concurrency.api;
 
+import java.util.List;
+
 /**
  * The contracts the exercises implement and the tests verify.
  *
@@ -132,6 +134,112 @@ public final class Contracts {
 
         /** Worker threads currently alive. Must be 0 after {@link #shutdownAndDrain} returns. */
         int liveWorkers();
+    }
+
+    /**
+     * Exercise 9 — see {@code t06shared.D16_HashMapCorruption} and
+     * {@code t06shared.D17_AtomicMapUpdates}.
+     *
+     * <p>A per-key event tally. Every {@link #record} must be counted, every
+     * {@link #consume} must correspond to exactly one earlier {@code record},
+     * and a key whose count reaches zero must disappear from the map rather than
+     * linger at 0.
+     *
+     * <p>The interesting part is that the starting code already uses a
+     * {@code ConcurrentHashMap} and is still wrong, because "each call is
+     * atomic" is not "my sequence of calls is atomic".
+     */
+    public interface EventCounts {
+        /** Records one occurrence of {@code key}. */
+        void record(String key);
+
+        /**
+         * Consumes one recorded occurrence of {@code key}.
+         *
+         * @return true if there was one to consume; false if the count was
+         *         already zero. Must never let two callers consume the same
+         *         single occurrence, and must never drive a count below zero.
+         */
+        boolean consume(String key);
+
+        /** Current count for {@code key}; 0 if the key is absent. Never negative. */
+        long count(String key);
+
+        /** Keys currently present. A key consumed down to zero must not be one. */
+        int distinctKeys();
+    }
+
+    /**
+     * Exercise 10 — see {@code t06shared.D18_CopyOrConfine}, and
+     * {@code ../01-foundations/07-logging-mdc-correlation-ids.md}, which is this
+     * same mechanism with a logging API on top.
+     *
+     * <p>A per-request correlation id, confined to the thread serving the
+     * request. Three properties the tests enforce, each a separate defect in the
+     * starting code:
+     * <ol>
+     *   <li>the id is visible only to the thread that bound it;</li>
+     *   <li>it is unbound on <b>every</b> exit path, including the exceptional
+     *       one — otherwise the next request on that pooled thread inherits it;</li>
+     *   <li>nested scopes restore the enclosing id rather than clearing it.</li>
+     * </ol>
+     */
+    public interface RequestContext {
+        /**
+         * Binds {@code correlationId} to the current thread, runs {@code body},
+         * and restores whatever was bound before — on every exit path.
+         */
+        void runWithCorrelationId(String correlationId, Runnable body);
+
+        /** The id bound to the calling thread, or {@code null} if none is. */
+        String currentCorrelationId();
+    }
+
+    /**
+     * Exercise 11 — see {@code t07coordination.D19_LatchVersusBarrier}.
+     *
+     * <p>A fixed team of workers running a computation in rounds. No worker may
+     * begin round <i>r+1</i> until every worker has finished round <i>r</i> and
+     * the round has been tallied exactly once.
+     *
+     * <p>Worker threads must be named {@code round-worker-<id>}; one test finds
+     * them by name to check they <b>park</b> at the barrier rather than spinning.
+     */
+    public interface RoundSync {
+        /** Runs {@code rounds} rounds on all workers; returns when every worker is done. */
+        void runAll(int rounds) throws InterruptedException;
+
+        /**
+         * One entry per completed round, in order: how many workers had arrived
+         * at the moment that round was tallied. Every entry must equal
+         * {@link #workers()}, and there must be exactly one entry per round.
+         */
+        List<Integer> tallies();
+
+        /** The fixed number of worker threads. */
+        int workers();
+    }
+
+    /**
+     * Exercise 12 — see {@code t07coordination.D20_SemaphorePermits}.
+     *
+     * <p>A bounded resource pool: at most {@code limit} tasks may run at once,
+     * callers <b>wait</b> for a slot rather than proceeding unaccounted, and a
+     * task that throws must not cost the pool a slot.
+     */
+    public interface BoundedResourcePool {
+        /**
+         * Runs {@code task} while holding one of the pool's slots, blocking
+         * until a slot is free. Exceptions from the task propagate to the
+         * caller — and must not leak the slot.
+         */
+        <T> T execute(java.util.concurrent.Callable<T> task) throws Exception;
+
+        /** Highest number of tasks ever observed running at the same time. */
+        int peakConcurrency();
+
+        /** Slots currently free. Back to the pool's full size once all work has finished. */
+        int availableSlots();
     }
 
     /**

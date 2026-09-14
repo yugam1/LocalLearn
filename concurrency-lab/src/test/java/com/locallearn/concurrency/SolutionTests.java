@@ -1,6 +1,10 @@
 package com.locallearn.concurrency;
 
 import com.locallearn.concurrency.api.Contracts.Bank;
+import com.locallearn.concurrency.api.Contracts.BoundedResourcePool;
+import com.locallearn.concurrency.api.Contracts.EventCounts;
+import com.locallearn.concurrency.api.Contracts.RequestContext;
+import com.locallearn.concurrency.api.Contracts.RoundSync;
 import com.locallearn.concurrency.api.Contracts.BoundedQueue;
 import com.locallearn.concurrency.api.Contracts.ComputeOnceCache;
 import com.locallearn.concurrency.api.Contracts.Counter;
@@ -12,6 +16,10 @@ import com.locallearn.concurrency.api.Contracts.Pipeline;
 import com.locallearn.concurrency.api.Contracts.StopSignal;
 import com.locallearn.concurrency.api.Contracts.WorkloadRunner;
 import com.locallearn.concurrency.contract.BankContract;
+import com.locallearn.concurrency.contract.BoundedResourcePoolContract;
+import com.locallearn.concurrency.contract.EventCountsContract;
+import com.locallearn.concurrency.contract.RequestContextContract;
+import com.locallearn.concurrency.contract.RoundSyncContract;
 import com.locallearn.concurrency.contract.BoundedQueueContract;
 import com.locallearn.concurrency.contract.ComputeOnceCacheContract;
 import com.locallearn.concurrency.contract.CounterContract;
@@ -27,6 +35,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 
 import java.util.function.Consumer;
+import java.util.function.IntConsumer;
 import java.util.function.Function;
 
 /**
@@ -106,6 +115,38 @@ class SolutionTests {
         @Override protected Pipeline newPipeline(int capacity, int workers,
                                                  Consumer<String> processor) {
             return new Solutions.Sol8Pipeline(capacity, workers, processor);
+        }
+    }
+
+    @Nested
+    @DisplayName("Sol9 — atomic map updates")
+    class Sol9 extends EventCountsContract {
+        @Override protected EventCounts newCounts() {
+            return new Solutions.Sol9EventCounts();
+        }
+    }
+
+    @Nested
+    @DisplayName("Sol10 — thread-confined request context")
+    class Sol10 extends RequestContextContract {
+        @Override protected RequestContext newContext() {
+            return new Solutions.Sol10Context();
+        }
+    }
+
+    @Nested
+    @DisplayName("Sol11 — reusable round barrier")
+    class Sol11 extends RoundSyncContract {
+        @Override protected RoundSync newRoundSync(int workers, IntConsumer roundWork) {
+            return new Solutions.Sol11Rounds(workers, roundWork);
+        }
+    }
+
+    @Nested
+    @DisplayName("Sol12 — semaphore-bounded resource pool")
+    class Sol12 extends BoundedResourcePoolContract {
+        @Override protected BoundedResourcePool newPool(int limit) {
+            return new Solutions.Sol12Pool(limit);
         }
     }
 

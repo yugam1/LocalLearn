@@ -1,5 +1,6 @@
 package com.locallearn.concurrency.solutions;
 
+import com.locallearn.concurrency.api.Contracts;
 import com.locallearn.concurrency.api.Contracts.Bank;
 import com.locallearn.concurrency.api.Contracts.BoundedQueue;
 import com.locallearn.concurrency.api.Contracts.ComputeOnceCache;
@@ -10,10 +11,16 @@ import com.locallearn.concurrency.api.Contracts.Pipeline;
 import com.locallearn.concurrency.api.Contracts.StopSignal;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BrokenBarrierException;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
@@ -21,6 +28,7 @@ import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.function.IntConsumer;
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -483,6 +491,286 @@ public final class Solutions {
                 }
             }
             return alive;
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════ SOLUTION 9
+    /**
+     * One call per read-modify-write, so the map holds the bin lock across the
+     * read <em>and</em> the write. The map type never changed — it was a
+     * {@code ConcurrentHashMap} in the broken version too, which is the point.
+     *
+     * <p>{@code merge(key, 1L, Long::sum)} is the counter idiom: insert 1 if the
+     * key is absent, otherwise combine the old value with the new one. It
+     * replaces {@code get}-then-{@code put} and it is not merely tidier — it is
+     * the difference between losing ~10% of increments and losing none.
+     *
+     * <p>{@code compute} handles the decrement, and the detail worth carrying
+     * away is that <b>returning null removes the entry</b>. That satisfies "a key
+     * consumed down to zero must disappear" inside the same atomic step, rather
+     * than with a follow-up {@code remove()} that would reopen exactly the gap we
+     * are closing.
+     *
+     * <p>{@code consume} has to report whether it took something, and a mapping
+     * function cannot return two values. The one-element array captures it from
+     * inside the function — safe because the function runs exactly once per call,
+     * on this thread, under the bin lock, and is read only after {@code compute}
+     * has returned.
+     *
+     * <p>Two alternatives worth knowing. {@code AtomicLong} values with
+     * {@code computeIfAbsent(key, k -> new AtomicLong())} then
+     * {@code incrementAndGet()} is faster under heavy per-key contention, because
+     * the increment no longer touches the map at all — but removal-at-zero then
+     * needs {@code remove(key, value)} and careful thought about a racing
+     * {@code record}. And {@code LongAdder} values (D9) win when the same key is
+     * hammered by many threads and read rarely. {@code merge} is the right
+     * default: it is one line, it is correct, and it is obvious.
+     */
+    public static final class Sol9EventCounts implements Contracts.EventCounts {
+
+        private final ConcurrentHashMap<String, Long> counts = new ConcurrentHashMap<>();
+
+        @Override
+        public void record(String key) {
+            counts.merge(key, 1L, Long::sum);
+        }
+
+        @Override
+        public boolean consume(String key) {
+            boolean[] consumed = {false};
+            counts.compute(key, (k, current) -> {
+                if (current == null || current <= 0) {
+                    return null;              // absent, and stays absent
+                }
+                consumed[0] = true;
+                return current == 1 ? null : current - 1;   // null REMOVES the entry
+            });
+            return consumed[0];
+        }
+
+        @Override
+        public long count(String key) {
+            return counts.getOrDefault(key, 0L);
+        }
+
+        @Override
+        public int distinctKeys() {
+            // Exact here because the tests call it when the map is quiescent.
+            // On a busy map this is an estimate — D16 measured it drifting by
+            // tens of thousands — and you must never branch on it (D16's
+            // `if (map.size() < CAP) put(...)` overshoots for exactly that reason).
+            return counts.size();
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════ SOLUTION 10
+    /**
+     * Thread confinement, done properly: a {@link ThreadLocal} for the storage,
+     * a {@code finally} for the cleanup, and save-and-restore rather than clear
+     * so that nesting works.
+     *
+     * <p>The {@code ThreadLocal} is {@code static final} on purpose. A
+     * {@code ThreadLocal} instance is the <em>key</em> into each thread's map,
+     * so one shared key is what makes "the same context" mean the same thing
+     * everywhere. A per-instance {@code ThreadLocal} created per request would
+     * be a fresh key each time — every lookup missing, and every dead key left
+     * in the thread's map.
+     *
+     * <p>The restore logic is the part people skip:
+     * <pre>{@code
+     * if (previous == null) ID.remove(); else ID.set(previous);
+     * }</pre>
+     * Unconditionally clearing breaks nesting — an inner scope exiting would
+     * wipe the outer request's id. Unconditionally setting {@code previous} would
+     * be worse still: when {@code previous} was null it would store a null and
+     * <b>leave the entry in the thread's map</b>, which is the leak D18
+     * demonstrates with an {@code initialValue}. {@code remove()}, never
+     * {@code set(null)}.
+     *
+     * <p>This is MDC, one layer down. {@code MDC.put} / {@code MDC.clear()} in a
+     * {@code finally} is this class with a logging API attached, and the two
+     * consequences carry over unchanged: the value does not follow work you hand
+     * to another thread (so {@code @Async} and {@code CompletableFuture} lose it
+     * unless you copy it across with a task decorator), and on a pooled thread a
+     * missing {@code remove()} is both a correctness bug and a memory leak.
+     */
+    public static final class Sol10Context implements Contracts.RequestContext {
+
+        private static final ThreadLocal<String> ID = new ThreadLocal<>();
+
+        @Override
+        public void runWithCorrelationId(String correlationId, Runnable body) {
+            String previous = ID.get();
+            ID.set(correlationId);
+            try {
+                body.run();
+            } finally {
+                if (previous == null) {
+                    ID.remove();              // remove(), NOT set(null) — see D18
+                } else {
+                    ID.set(previous);         // restore the enclosing scope
+                }
+            }
+        }
+
+        @Override
+        public String currentCorrelationId() {
+            return ID.get();
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════ SOLUTION 11
+    /**
+     * A {@link CyclicBarrier} with a barrier action — the reusable half of the
+     * 2×2, which is what the one-shot latch could never be.
+     *
+     * <p>Two things make this work, and both are easy to get wrong:
+     *
+     * <ol>
+     *   <li><b>The barrier resets itself.</b> There is no {@code reset()} call
+     *       anywhere below. The moment the last party arrives, the barrier trips
+     *       and is immediately armed again for the next round. That is the whole
+     *       difference from a latch, whose count reaches zero once and stays
+     *       there — so the latch version had no barrier at all from round 2 on,
+     *       silently.</li>
+     *   <li><b>The tally lives in the barrier action.</b> It runs on the last
+     *       thread to arrive, exactly once per round, while every other party is
+     *       still parked. That is the only instant in the round when no worker is
+     *       running, which makes it the only place the tally can be exact.
+     *       Tallying after {@code await()} returns — even with a perfectly good
+     *       barrier — races with the other workers starting the next round.</li>
+     * </ol>
+     *
+     * <p>Workers park inside {@code await()} rather than spinning, which is what
+     * the CPU-time test checks. A {@code while (arrived.get() < workers) { }}
+     * loop would satisfy every correctness assertion and burn a core per waiting
+     * worker — the same defect Ex7 and Ex8 measured, and the same reason those
+     * tests exist.
+     *
+     * <p>{@link BrokenBarrierException} has to be caught, and catching it is not
+     * ceremony. If any party is interrupted or times out, the rendezvous can
+     * never complete, so the barrier marks itself broken and wakes everybody with
+     * this exception instead of leaving them parked forever. That is precisely
+     * the diagnosis a latch or semaphore cannot give you (D21).
+     */
+    public static final class Sol11Rounds implements Contracts.RoundSync {
+
+        private final int workers;
+        private final IntConsumer roundWork;
+        private final List<Integer> tallies = Collections.synchronizedList(new ArrayList<>());
+        private final AtomicInteger arrived = new AtomicInteger();
+        private final CyclicBarrier barrier;
+
+        public Sol11Rounds(int workers, IntConsumer roundWork) {
+            this.workers = workers;
+            this.roundWork = roundWork;
+            // The action runs on the last arriver, once per round, with every
+            // other party still parked — the one safe window in the round.
+            this.barrier = new CyclicBarrier(workers, () -> tallies.add(arrived.getAndSet(0)));
+        }
+
+        @Override
+        public void runAll(int rounds) throws InterruptedException {
+            CountDownLatch allFinished = new CountDownLatch(workers);
+            for (int w = 0; w < workers; w++) {
+                final int id = w;
+                Thread worker = new Thread(() -> {
+                    try {
+                        for (int round = 0; round < rounds; round++) {
+                            roundWork.accept(id);
+                            arrived.incrementAndGet();
+                            barrier.await();          // parks; reusable; resets itself
+                        }
+                    } catch (InterruptedException | BrokenBarrierException e) {
+                        Thread.currentThread().interrupt();
+                    } finally {
+                        allFinished.countDown();      // in a finally, always (D19)
+                    }
+                }, "round-worker-" + id);
+                worker.setDaemon(true);
+                worker.start();
+            }
+            allFinished.await();
+        }
+
+        @Override
+        public List<Integer> tallies() {
+            return new ArrayList<>(tallies);
+        }
+
+        @Override
+        public int workers() {
+            return workers;
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════ SOLUTION 12
+    /**
+     * {@code acquire()} to wait for a slot, and {@code release()} in a
+     * {@code finally} so that no exception can cost the pool one.
+     *
+     * <p>The {@code finally} is not defensive style, it is the difference
+     * between a pool and a slow leak. A {@code release()} placed after the work
+     * is skipped on every exceptional path, and a permit that is never released
+     * is gone for the lifetime of the process. The failure is cumulative: the
+     * pool shrinks one exception at a time, so what you see in production is not
+     * an outage at the first error but a gradual slide, ending in every caller
+     * parked forever — with no deadlock report, because a permit has no owner
+     * and therefore no edge in the wait-for graph (D21).
+     *
+     * <p>The in-flight counter gets the same treatment and for the same reason:
+     * a decrement placed after {@code task.call()} would drift upward on every
+     * failure and quietly corrupt {@link #peakConcurrency()}.
+     *
+     * <p>{@code acquire()} rather than {@code tryAcquire()} is what the contract
+     * asks for here — callers wait, nothing is rejected, nothing runs
+     * unaccounted. Know what that buys and what it costs: it is topic 5's
+     * <b>block</b>, and the queue it creates is made of parked threads that no
+     * dashboard shows you. At a real service boundary
+     * {@code tryAcquire(timeout)} is usually the better default, because
+     * returning false is a decision you can count, log, alert on and turn into a
+     * 503 — topic 5's <b>drop</b>, chosen deliberately rather than by omission.
+     *
+     * <p>One last property worth noticing: this is a pool of <em>permission</em>,
+     * not of objects. Nothing here hands out a connection. If you need the object
+     * too, the semaphore guards the borrow and a {@code BlockingQueue} holds the
+     * instances — which is exactly how HikariCP is built, and why its
+     * {@code maximumPoolSize} and {@code connectionTimeout} are the same two
+     * knobs as {@code limit} and a {@code tryAcquire} timeout.
+     */
+    public static final class Sol12Pool implements Contracts.BoundedResourcePool {
+
+        private final Semaphore slots;
+        private final AtomicInteger inFlight = new AtomicInteger();
+        private final AtomicInteger peak = new AtomicInteger();
+
+        public Sol12Pool(int limit) {
+            this.slots = new Semaphore(limit);
+        }
+
+        @Override
+        public <T> T execute(Callable<T> task) throws Exception {
+            slots.acquire();                 // WAIT for a slot; never proceed without one
+            try {
+                peak.accumulateAndGet(inFlight.incrementAndGet(), Math::max);
+                try {
+                    return task.call();
+                } finally {
+                    inFlight.decrementAndGet();
+                }
+            } finally {
+                slots.release();             // every exit path, including the throw
+            }
+        }
+
+        @Override
+        public int peakConcurrency() {
+            return peak.get();
+        }
+
+        @Override
+        public int availableSlots() {
+            return slots.availablePermits();
         }
     }
 
