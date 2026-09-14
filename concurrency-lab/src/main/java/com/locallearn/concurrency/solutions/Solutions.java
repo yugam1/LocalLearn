@@ -485,4 +485,292 @@ public final class Solutions {
             return alive;
         }
     }
+
+    // ═════════════════════════════════════════════════════════ SOLUTION 13
+    /**
+     * A thread pool in ~90 lines. Every piece is something the lab already
+     * built; the only genuinely new thing is the order of the four checks in
+     * {@link #execute}.
+     *
+     * <h2>Why the queue is tried before growing the pool</h2>
+     * A queue slot is a pointer; a thread is ~1 MB of reserved stack plus a
+     * scheduler entity. So the pool spends the cheap resource first and treats
+     * thread creation as the last thing it does before refusing work outright.
+     * This is why {@code maxPoolSize} is unreachable configuration whenever the
+     * queue is large (D22).
+     *
+     * <h2>Why shutdown needs two verbs and not a flag</h2>
+     * A single {@code volatile stopped} flag cannot express both meanings, and
+     * worse, it cannot even deliver one of them: a worker parked in
+     * {@code take()} never re-reads it (topic 5, P3). So:
+     * <ul>
+     *   <li><b>Drain</b> ({@link #shutdownAndAwait}) uses Ex8's poison pill —
+     *       one per worker, through the same FIFO, so it necessarily arrives
+     *       after every task submitted before it. "Saw the pill" proves "drained
+     *       everything".</li>
+     *   <li><b>Abandon</b> ({@link #shutdownNow}) drains the queue into a list,
+     *       hands it back, and interrupts the workers. The list is the point:
+     *       the loss becomes countable instead of silent.</li>
+     * </ul>
+     *
+     * <h2>The detail that is easy to miss</h2>
+     * A worker is created <em>with</em> its first task rather than being pointed
+     * at the queue, because a brand-new worker must run the task that caused it
+     * to exist — otherwise, with a full queue, that task would have nowhere to
+     * go. {@code ThreadPoolExecutor.addWorker} takes a {@code firstTask} for the
+     * same reason.
+     */
+    public static final class Sol13Pool implements com.locallearn.concurrency.api.Contracts.MiniPool {
+        /** Compared with ==, never equals(): identity is the whole guarantee. */
+        private static final Runnable PILL = () -> { };
+
+        private final int corePoolSize;
+        private final int maxPoolSize;
+        private final java.util.concurrent.BlockingQueue<Runnable> queue;
+
+        private final List<Thread> workers = new ArrayList<>();
+        private final Object poolLock = new Object();       // guards `workers` and `shutdown`
+        private final AtomicLong completed = new AtomicLong();
+        private final AtomicInteger largest = new AtomicInteger();
+        private volatile boolean shutdown;
+
+        public Sol13Pool(int corePoolSize, int maxPoolSize, int queueCapacity) {
+            this.corePoolSize = corePoolSize;
+            this.maxPoolSize = maxPoolSize;
+            this.queue = new java.util.concurrent.ArrayBlockingQueue<>(queueCapacity);
+        }
+
+        @Override
+        public void execute(Runnable task) {
+            if (task == null) {
+                throw new NullPointerException("task");
+            }
+            synchronized (poolLock) {
+                if (shutdown) {
+                    throw new java.util.concurrent.RejectedExecutionException("pool is shut down");
+                }
+                // Step 1 — below core: always a new worker, even if the queue is empty.
+                // A pool with idle capacity should be growing toward its core size.
+                if (workers.size() < corePoolSize) {
+                    addWorker(task);
+                    return;
+                }
+            }
+            // Step 2 — the QUEUE, before any further growth. This is the rule.
+            if (queue.offer(task)) {
+                return;
+            }
+            synchronized (poolLock) {
+                if (shutdown) {
+                    throw new java.util.concurrent.RejectedExecutionException("pool is shut down");
+                }
+                // Step 3 — the queue refused, so now (and only now) grow to max.
+                if (workers.size() < maxPoolSize) {
+                    addWorker(task);
+                    return;
+                }
+            }
+            // Step 4 — at max with a full queue. AbortPolicy's behaviour (D23).
+            throw new java.util.concurrent.RejectedExecutionException(
+                    "pool at max (" + maxPoolSize + ") and queue full");
+        }
+
+        /** Must be called holding {@code poolLock}. */
+        private void addWorker(Runnable firstTask) {
+            Thread worker = new Thread(() -> runWorker(firstTask),
+                    "minipool-worker-" + workers.size());
+            workers.add(worker);
+            largest.accumulateAndGet(workers.size(), Math::max);
+            worker.start();
+        }
+
+        private void runWorker(Runnable firstTask) {
+            try {
+                Runnable task = firstTask;
+                while (true) {
+                    if (task == PILL) {
+                        return;                     // drained: FIFO put the pill last
+                    }
+                    if (task != null) {
+                        try {
+                            task.run();
+                        } catch (RuntimeException | Error e) {
+                            // A pool must outlive a failing task. Note this is the
+                            // execute() semantics of D24: the failure is visible to
+                            // an UncaughtExceptionHandler, and the worker survives.
+                            Thread current = Thread.currentThread();
+                            Thread.UncaughtExceptionHandler handler =
+                                    current.getUncaughtExceptionHandler();
+                            if (handler != null) {
+                                handler.uncaughtException(current, e);
+                            }
+                        } finally {
+                            completed.incrementAndGet();
+                        }
+                    }
+                    task = queue.take();            // PARKS while empty — never a spin
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt(); // shutdownNow(): abandon, flag restored
+            }
+        }
+
+        @Override
+        public void shutdownAndAwait() throws InterruptedException {
+            List<Thread> snapshot;
+            synchronized (poolLock) {
+                shutdown = true;                    // stop accepting
+                snapshot = new ArrayList<>(workers);
+            }
+            // One pill per worker, through the data queue. put() blocks if the
+            // queue is full, which is correct: it simply waits for a worker to
+            // make room, and every real task still ahead of the pill runs first.
+            for (int i = 0; i < snapshot.size(); i++) {
+                queue.put(PILL);
+            }
+            for (Thread worker : snapshot) {
+                worker.join();
+            }
+        }
+
+        @Override
+        public List<Runnable> shutdownNow() {
+            List<Thread> snapshot;
+            synchronized (poolLock) {
+                shutdown = true;
+                snapshot = new ArrayList<>(workers);
+            }
+            // Drain the backlog into a list FIRST, so the caller can see exactly
+            // what was abandoned — then interrupt. Draining after interrupting
+            // would race with workers still taking from the queue.
+            List<Runnable> neverStarted = new ArrayList<>();
+            queue.drainTo(neverStarted);
+            neverStarted.removeIf(r -> r == PILL);  // pills are not user work
+            for (Thread worker : snapshot) {
+                worker.interrupt();
+            }
+            return neverStarted;
+        }
+
+        @Override
+        public int poolSize() {
+            int alive = 0;
+            synchronized (poolLock) {
+                for (Thread worker : workers) {
+                    if (worker.isAlive()) {
+                        alive++;
+                    }
+                }
+            }
+            return alive;
+        }
+
+        @Override
+        public int largestPoolSize() {
+            return largest.get();
+        }
+
+        @Override
+        public int queueSize() {
+            return queue.size();
+        }
+
+        @Override
+        public long completed() {
+            return completed.get();
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════ SOLUTION 14
+    /**
+     * Two workloads, two executors, because they are two different questions.
+     *
+     * <pre>
+     *   CPU-bound : a bounded platform pool sized to the cores. There are only
+     *               N cores; more runnable threads than that cannot compute
+     *               faster, they can only take turns. (D24 measured the
+     *               plateau.)
+     *   IO-bound  : one virtual thread per task. A blocked virtual thread
+     *               unmounts and holds no OS thread, so "how many can block at
+     *               once" stops being a resource question. (D27 measured
+     *               ~68,000 blocking tasks/sec against ~120 for a cores-sized
+     *               platform pool.)
+     * </pre>
+     *
+     * <h2>Why there is no lock here at all</h2>
+     * The broken version locked to protect a shared result list. That lock was
+     * doing real work — {@code ArrayList} genuinely is not thread-safe — but it
+     * was the wrong fix for the problem, because it serialised the tasks
+     * themselves. The right fix is to not share the list: each task returns its
+     * value through its own {@code Future}, and the caller assembles the results
+     * single-threadedly afterwards, in submission order, for free.
+     *
+     * <p>That matters twice over on the IO path. Holding a monitor across a
+     * blocking call <b>pins</b> the virtual thread to its carrier (Java 21), and
+     * D27 measured a 108x throughput collapse from pinning with no contention at
+     * all. The general rule this leaves you with: <b>never hold a lock across a
+     * blocking call</b> — it was always bad for throughput, and with virtual
+     * threads it is bad for throughput in a new and much larger way.
+     */
+    public static final class Sol14Runner
+            implements com.locallearn.concurrency.api.Contracts.WorkloadRunner {
+
+        private static final int CORES = Runtime.getRuntime().availableProcessors();
+
+        /** CPU work: bounded, because cores are the scarce resource. */
+        private final java.util.concurrent.ExecutorService cpuPool =
+                java.util.concurrent.Executors.newFixedThreadPool(CORES);
+
+        @Override
+        public List<Long> runCpuBound(List<java.util.concurrent.Callable<Long>> tasks)
+                throws Exception {
+            return invokeAllInOrder(cpuPool, tasks);
+        }
+
+        @Override
+        public List<Long> runIoBound(List<java.util.concurrent.Callable<Long>> tasks)
+                throws Exception {
+            // A new virtual-thread executor per call is deliberate and cheap:
+            // this is a thread FACTORY, not a pool, so there is nothing to reuse
+            // and nothing to size. try-with-resources closes it, and close()
+            // waits for every task — structured, in the D28 sense.
+            try (java.util.concurrent.ExecutorService ioExecutor =
+                         java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+                return invokeAllInOrder(ioExecutor, tasks);
+            }
+        }
+
+        /**
+         * Submits everything, then collects in submission order. No shared
+         * mutable state, therefore no lock, therefore nothing held across a
+         * blocking call.
+         */
+        private static List<Long> invokeAllInOrder(
+                java.util.concurrent.ExecutorService executor,
+                List<java.util.concurrent.Callable<Long>> tasks) throws Exception {
+            List<java.util.concurrent.Future<Long>> futures = new ArrayList<>(tasks.size());
+            for (java.util.concurrent.Callable<Long> task : tasks) {
+                futures.add(executor.submit(task));
+            }
+            List<Long> results = new ArrayList<>(tasks.size());
+            for (java.util.concurrent.Future<Long> future : futures) {
+                try {
+                    results.add(future.get());
+                } catch (java.util.concurrent.ExecutionException e) {
+                    // D24: a Future swallows the failure until someone asks.
+                    // We are asking, so surface the real cause, not the wrapper.
+                    if (e.getCause() instanceof Exception cause) {
+                        throw cause;
+                    }
+                    throw e;
+                }
+            }
+            return results;
+        }
+
+        @Override
+        public void close() {
+            cpuPool.shutdownNow();
+        }
+    }
 }
