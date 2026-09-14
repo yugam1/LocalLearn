@@ -101,4 +101,36 @@ public final class Contracts {
         /** Highest size ever observed — the test asserts this never exceeded capacity. */
         int peakSize();
     }
+
+    /**
+     * Exercise 8 — see {@code t05handoff.D13_UnboundedBacklog} and
+     * {@code t05handoff.D15_ShutdownPoisonPill}.
+     * A producer–consumer pipeline: bounded backlog (backpressure, never
+     * dropped items), worker threads that park while idle, and a shutdown that
+     * drains every accepted item before the workers exit.
+     */
+    public interface Pipeline {
+        /**
+         * Hands one item to the pipeline. Must apply backpressure: when the
+         * backlog is at capacity this <b>blocks</b> — it never drops the item
+         * and never lets the backlog grow past capacity.
+         */
+        void submit(String item) throws InterruptedException;
+
+        /**
+         * Drains and stops: returns only after <b>every</b> item accepted by
+         * {@link #submit} has been processed and every worker thread has
+         * terminated. Behaviour of {@code submit} after this is undefined.
+         */
+        void shutdownAndDrain() throws InterruptedException;
+
+        /** How many items the processor has completed so far. */
+        long processed();
+
+        /** Highest backlog ever observed — the test asserts this never exceeded capacity. */
+        int backlogPeak();
+
+        /** Worker threads currently alive. Must be 0 after {@link #shutdownAndDrain} returns. */
+        int liveWorkers();
+    }
 }

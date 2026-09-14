@@ -1,12 +1,12 @@
 # 🎤 Mock Interview — Interleaved Round
 
-> **How to use:** 25 questions, deliberately shuffled across every phase —
+> **How to use:** 28 questions, deliberately shuffled across every phase —
 > interleaving is the point (blocked practice feels better; mixed practice
 > retains better). Answer OUT LOUD in full sentences before opening anything.
 > Score yourself: ✅ fluent · 🟡 got there slowly · ❌ missed. Anything 🟡/❌ →
 > that doc's Retrieval Gym goes back on your schedule.
 >
-> Rounds: do 1–12 in one sitting, 13–25 in another. Re-shuffle by starting from
+> Rounds: do 1–14 in one sitting, 15–28 in another. Re-shuffle by starting from
 > a random number.
 
 ---
@@ -63,12 +63,18 @@
 
 **25.** SIGTERM arrives mid-request, mid-Kafka-batch. List everything a correctly configured Spring Boot app does before exiting, and the one arithmetic rule tying Spring's timeout to Kubernetes. *(→ 16-production-hardening, 15-devops-docker-k8s)*
 
+**26.** A worker thread runs `while (!done) { process(queue.take()); }`. `done` is `volatile`. The producer finishes, sets `done = true`, and exits — and the worker never terminates. You already know a plain `boolean` stop flag fails for a *different* reason. Explain both mechanisms, and give two fixes with the trade-off between them. *(→ 02-concurrency/02, 02-concurrency/05)*
+
+**27.** A teammate replaces a `LinkedBlockingQueue(1000)` with an unbounded one "so we stop dropping work under load." Three weeks later the service OOMs nightly. Walk me through what actually happened, and the three options you *always* have when a producer outruns a consumer. *(→ 02-concurrency/05)*
+
+**28.** Your consumer pool is idle overnight yet the pods sit at 100% CPU. One line of code is responsible. What is it, how would you confirm it from a thread dump, and what replaces it? *(→ 02-concurrency/05, 02-concurrency/01)*
+
 ---
 
 ## Scoring
 
 | ✅ count | Verdict |
 |---|---|
-| 22–25 | Interview-ready on covered material — maintain with R4 passes only |
-| 17–21 | Solid — drill the 🟡/❌ docs' gyms this week |
-| < 17 | Reset R1/R2 passes on every ❌ topic before booking anything |
+| 25–28 | Interview-ready on covered material — maintain with R4 passes only |
+| 19–24 | Solid — drill the 🟡/❌ docs' gyms this week |
+| < 19 | Reset R1/R2 passes on every ❌ topic before booking anything |

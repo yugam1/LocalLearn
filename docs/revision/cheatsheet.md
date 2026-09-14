@@ -285,6 +285,31 @@ livelock: both RUNNABLE, retrying in lockstep forever → dump looks FINE (needs
 
 ---
 
+## 02.5 · Hand-off, Blocking Queues & Backpressure
+*Full doc: [`../02-concurrency/05-handoff-blocking-queues.md`](../02-concurrency/05-handoff-blocking-queues.md)*
+
+**Mental model:** A queue between a producer and a consumer does not make them
+the same speed — it only decides **what happens when they aren't**. Exactly three
+answers exist and there is no fourth: **block** (backpressure), **drop** (shed),
+or **grow** (crash later, while feeling like you chose nothing). An unbounded
+queue is not a buffer; it is an `OutOfMemoryError` with a delay fuse.
+
+```
+UNBOUNDED  produced 1,007,114 | consumed 7,116 | backlog 1,000,000 in 419ms (~140 MB)
+BOUNDED    produced    52,958 | consumed 51,934 | backlog     1,024        (~144 KB)
+```
+
+**Five rules you must never get wrong:**
+1. **Bounded unless you can prove the producer is rate-limited.** Capacity is not a tuning knob — it is *where your system fails*, chosen on purpose.
+2. `poll()` = null now (a loop on it is a busy-wait, one burned core per idle worker) · `take()` = parks · **`poll(timeout)` = what production loops want** (parks, but wakes for shutdown checks).
+3. A `volatile` flag **cannot stop a thread parked in `take()`**. Visible ≠ awake — a parked thread executes nothing, so it re-checks nothing. (Not D4's bug: that was the read being optimised away.)
+4. Shutdown = **drain** (poison pill / `shutdown()`) or **abandon** (interrupt / `shutdownNow()`). Pick deliberately; the default is silent data loss. Pill compared with `==`, N consumers need N pills.
+5. `SynchronousQueue` capacity is **zero** — a rendezvous whose job is making "no idle consumer" an instant signal. That is how `newCachedThreadPool` decides to spawn.
+
+*Run first: D13 (140 MB backlog in 0.4s), D14 (the family + a benchmark that contradicts intuition), D15 (three shutdowns, two broken).*
+
+---
+
 ## 03.1 · Thread Pools & @Async
 *Full doc: [`../03-async-and-scheduling/01-thread-pools-completablefuture.md`](../03-async-and-scheduling/01-thread-pools-completablefuture.md)*
 

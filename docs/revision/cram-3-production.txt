@@ -1,0 +1,35 @@
+HikariCP pool sizing formula?	(cores x 2) + spindles - small pools beat big pools
+Thread-pool size for CPU-bound work?	cores + 1
+Thread-pool size for IO-bound work?	cores x (1 + wait/cpu)
+Queue size formula?	peak RPS x avg duration (s) x safety factor
+Spring cron for daily at 2 AM?	0 0 2 * * ?
+Spring cron field order?	sec min hour day-of-month month day-of-week (6 fields)
+Command to diagnose a deadlock on a running JVM?	jcmd <pid> Thread.print - look for 'Found one Java-level deadlock'
+Kafka replay command essentials?	kafka-consumer-groups --reset-offsets --to-datetime|--to-earliest --execute, group stopped
+Consumer lag formula?	log-end offset minus committed offset, per partition - alert on size AND age
+auto.offset.reset: earliest vs latest?	Process history vs only new - applies per group on first connect
+Flyway migration file naming?	V{n}__{description}.sql - double underscore; R__ reruns on checksum change
+The OSIV setting and its value?	spring.jpa.open-in-view: false, always
+Global lazy-load batching setting?	hibernate.default_batch_fetch_size: 10
+Three requirements for JDBC insert batching?	jdbc.batch_size + order_inserts + SEQUENCE ids (IDENTITY blocks it)
+HikariCP setting that finds connection leaks?	leak-detection-threshold - logs the stack of the holder
+BCrypt cost factor for production?	10 to 12
+Log an exception with context, correctly?	log.error("id={}", id, ex) - exception LAST, no placeholder for it
+Change a log level at runtime?	POST /actuator/loggers/<logger> {"configuredLevel":"DEBUG"}
+SpringDoc's two endpoints?	/v3/api-docs (OpenAPI JSON) and /swagger-ui.html
+Enable fleet-wide p99 latency?	percentiles-histogram: true, then PromQL histogram_quantile over merged buckets
+Redis distributed lock recipe?	SET key token NX EX ttl - verify the unique token before delete
+ShedLock lockAtMostFor vs lockAtLeastFor?	Crash-insurance lease TTL vs minimum hold for clock skew
+Docker layer-cache trick for Maven builds?	COPY pom.xml + dependency:go-offline BEFORE COPY src
+JVM memory rule inside a container?	-Xmx or MaxRAMPercentage below the K8s memory limit
+Zero-downtime deployment trio?	maxUnavailable: 0 + readiness probe + graceful shutdown (grace >= drain)
+CI gate that catches a failed rollout?	kubectl rollout status --timeout - failure turns the build red
+Build a Postgres index without blocking writes?	CREATE INDEX CONCURRENTLY - non-transactional; a failed build leaves an INVALID index
+The four alert-worthy metrics?	5xx rate, p99 latency, Hikari pending, consumer lag
+Optimistic locking ingredients?	@Version field; conflict throws OptimisticLockException, map to 409
+Graceful shutdown order?	Stop intake > drain HTTP > commit Kafka offsets > drain schedulers > close pool > exit
+Default rule for queue capacity?	Bounded unless you can PROVE the producer is rate-limited
+What does queue capacity actually decide?	Where your system fails - it is a design choice, not a tuning knob
+shutdown() vs shutdownNow()?	Drain the queue then stop vs interrupt and RETURN the undone tasks
+Pipeline equivalent of shutdown() vs shutdownNow()?	Poison pill (drain) vs interrupt (abandon)
+Which verb should a production consumer loop use?	poll(timeout, unit) - parks efficiently yet wakes so shutdown checks get a look-in

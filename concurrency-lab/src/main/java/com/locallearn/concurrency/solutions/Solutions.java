@@ -6,14 +6,20 @@ import com.locallearn.concurrency.api.Contracts.ComputeOnceCache;
 import com.locallearn.concurrency.api.Contracts.Counter;
 import com.locallearn.concurrency.api.Contracts.Inventory;
 import com.locallearn.concurrency.api.Contracts.InterruptibleWorker;
+import com.locallearn.concurrency.api.Contracts.Pipeline;
 import com.locallearn.concurrency.api.Contracts.StopSignal;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Consumer;
 import java.util.function.Function;
 
 /**
@@ -379,6 +385,104 @@ public final class Solutions {
             } finally {
                 lock.unlock();
             }
+        }
+    }
+
+    /**
+     * EXERCISE 8 — the pipeline: bounded queue for backpressure, parked
+     * workers, poison-pill drain.
+     *
+     * <p>Three fixes, one per planted defect:
+     * <ol>
+     *   <li><b>Backpressure</b>: the backlog is an {@code ArrayBlockingQueue}
+     *       of exactly the given capacity, and {@code submit} uses {@code put},
+     *       which blocks while full. A fast producer is slowed to the workers'
+     *       pace instead of growing the heap (D13). Note the peak is sampled
+     *       <em>after</em> put returns — the queue itself enforces the bound,
+     *       the counter only reports it.</li>
+     *   <li><b>No busy-wait</b>: workers block in {@code take()}, parking while
+     *       the backlog is empty, exactly like Sol7 — the library queue parks
+     *       on the same two-condition mechanism you built there.</li>
+     *   <li><b>Drain-then-stop</b>: shutdown sends one {@link #PILL} per worker
+     *       through the data queue. FIFO means each pill arrives after every
+     *       item submitted before shutdown, so a worker that sees a pill has
+     *       nothing left to drain. Identity comparison ({@code ==}) means no
+     *       real item can impersonate it — {@code equals()} would let the
+     *       string "POISON" from a user kill a worker early, which is why the
+     *       pill is a deliberately unique instance.</li>
+     * </ol>
+     *
+     * <p>One subtlety: the pills also occupy queue capacity, so with capacity 1
+     * and 8 workers, {@code shutdownAndDrain} feeds pills one at a time as
+     * workers make room. {@code put} handles that for free — another reason
+     * blocking verbs beat clever bookkeeping.
+     */
+    public static final class Sol8Pipeline implements Pipeline {
+        /** Compared with ==, never equals(): must be THIS object, see class doc. */
+        private static final String PILL = new String("POISON-PILL");
+
+        private final ArrayBlockingQueue<String> backlog;
+        private final List<Thread> workers = new ArrayList<>();
+        private final AtomicLong processed = new AtomicLong();
+        private final AtomicInteger backlogPeak = new AtomicInteger();
+
+        public Sol8Pipeline(int capacity, int workerCount, Consumer<String> processor) {
+            this.backlog = new ArrayBlockingQueue<>(capacity);
+            for (int w = 0; w < workerCount; w++) {
+                Thread worker = new Thread(() -> {
+                    try {
+                        while (true) {
+                            String item = backlog.take();   // parks while empty — no spin
+                            if (item == PILL) {
+                                return;                     // drained: FIFO puts the pill last
+                            }
+                            processor.accept(item);
+                            processed.incrementAndGet();
+                        }
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt(); // abandon-style stop, if ever used
+                    }
+                }, "pipeline-worker-" + w);
+                workers.add(worker);
+                worker.start();
+            }
+        }
+
+        @Override
+        public void submit(String item) throws InterruptedException {
+            backlog.put(item);                              // blocks at capacity: backpressure
+            backlogPeak.accumulateAndGet(backlog.size(), Math::max);
+        }
+
+        @Override
+        public void shutdownAndDrain() throws InterruptedException {
+            for (int i = 0; i < workers.size(); i++) {
+                backlog.put(PILL);                          // one pill stops exactly one worker
+            }
+            for (Thread worker : workers) {
+                worker.join();                              // returns only when all have drained
+            }
+        }
+
+        @Override
+        public long processed() {
+            return processed.get();
+        }
+
+        @Override
+        public int backlogPeak() {
+            return backlogPeak.get();
+        }
+
+        @Override
+        public int liveWorkers() {
+            int alive = 0;
+            for (Thread worker : workers) {
+                if (worker.isAlive()) {
+                    alive++;
+                }
+            }
+            return alive;
         }
     }
 }

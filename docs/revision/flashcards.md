@@ -175,6 +175,27 @@ while not if around await()	Spurious wakeups · signalAll wakes wrong threads ·
 Cache stampede fix	computeIfAbsent (per-bin lock); slow loader → cache a CompletableFuture
 ```
 
+## 02.5 · Hand-off, Queues & Backpressure
+
+```
+Producer outruns consumer — options	Block (backpressure) · Drop (shed) · Grow (OOM later). No fourth.
+Unbounded queue, measured	1,000,000 items / ~140 MB in 419ms vs bounded flat at 1,024
+Capacity is	WHERE YOUR SYSTEM FAILS, chosen on purpose — not a tuning knob
+The decision rule	Bounded unless you can PROVE the producer is rate-limited
+poll() vs take() vs poll(timeout)	null now (loop = busy-wait) · parks (deaf to flags) · parks but wakes — use this
+volatile flag + take()	HANGS. Parked thread executes nothing → re-checks nothing. Visible ≠ awake
+D4 hang vs D15 hang	Read optimised away  vs  reader is parked. Same symptom, opposite cause
+interrupt() shutdown	Prompt AND lossy — measured 1,256 of 10,000 abandoned
+Poison pill	In-band sentinel, FIFO ⇒ arrives after every real item ⇒ "saw pill" proves "drained"
+Pill compared with	== never equals() — must be THAT instance; N consumers need N pills
+Pill : interrupt ::	shutdown() : shutdownNow()  — drain vs abandon
+SynchronousQueue	Capacity ZERO, rendezvous. offer() fails unless a taker is parked → newCachedThreadPool
+ArrayBQ vs LinkedBQ	1 lock + prealloc array  vs  2 locks (put/take) + node per item
+Measured 1P/1C vs 4P/4C	ArrayBQ 289/134 — FASTER with more threads (park/unpark dominates, held 7/7 runs)
+DelayQueue	Items invisible until their delay expires — how ScheduledThreadPoolExecutor works
+PriorityBlockingQueue	Unbounded and NOT FIFO — both facts bite
+```
+
 ## 03.1 · Thread Pools & @Async
 
 ```

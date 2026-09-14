@@ -5,6 +5,7 @@ import com.locallearn.concurrency.api.Contracts.ComputeOnceCache;
 import com.locallearn.concurrency.api.Contracts.Counter;
 import com.locallearn.concurrency.api.Contracts.Inventory;
 import com.locallearn.concurrency.api.Contracts.InterruptibleWorker;
+import com.locallearn.concurrency.api.Contracts.Pipeline;
 import com.locallearn.concurrency.api.Contracts.StopSignal;
 
 import java.util.HashMap;
@@ -358,6 +359,99 @@ public final class Exercises {
         @Override
         public int peakSize() {
             return peak;
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════ EXERCISE 8
+    /**
+     * <b>Fix the pipeline.</b> See {@code t05handoff.D13_UnboundedBacklog} and
+     * {@code t05handoff.D15_ShutdownPoisonPill}.
+     *
+     * <p>This is the first exercise where the broken version <em>mostly
+     * works</em> — items flow through and get processed. It is broken the way
+     * production systems are broken: three latent defects that each show up
+     * under a different condition, and every one of them was a demo:
+     * <ol>
+     *   <li><b>No backpressure</b> (D13). The backlog is unbounded, so a fast
+     *       producer grows it without limit — the test's slow consumer makes
+     *       {@code backlogPeak()} blow straight past the capacity you were given.</li>
+     *   <li><b>Busy-wait</b> (D14's verb grid, Ex7's lesson). Workers spin on
+     *       {@code poll()}, burning a core each while the queue is empty.</li>
+     *   <li><b>Lossy shutdown</b> (D15). A volatile flag stops the workers
+     *       wherever they happen to be, abandoning whatever is still queued —
+     *       the test counts every submitted item and will find the missing ones.</li>
+     * </ol>
+     *
+     * <p>Hint: you already own both halves of the fix. A bounded blocking queue
+     * is Ex7 (here you may just use {@code ArrayBlockingQueue} — you've earned
+     * it); the shutdown is D15's poison pill, one per worker, sent through the
+     * same queue so FIFO guarantees it arrives after every real item. Compare
+     * the pill with {@code ==}, and think about why {@code equals()} would be
+     * a bug.
+     */
+    public static final class Ex8Pipeline implements Pipeline {
+        private final java.util.concurrent.LinkedBlockingQueue<String> backlog =
+                new java.util.concurrent.LinkedBlockingQueue<>();   // TODO broken: unbounded — capacity is ignored
+        private final java.util.List<Thread> workers = new java.util.ArrayList<>();
+        private final java.util.function.Consumer<String> processor;
+        private final java.util.concurrent.atomic.AtomicLong processed =
+                new java.util.concurrent.atomic.AtomicLong();
+        private final java.util.concurrent.atomic.AtomicInteger backlogPeak =
+                new java.util.concurrent.atomic.AtomicInteger();
+        private volatile boolean stopped;
+
+        public Ex8Pipeline(int capacity, int workerCount, java.util.function.Consumer<String> processor) {
+            this.processor = processor;
+            for (int w = 0; w < workerCount; w++) {
+                Thread worker = new Thread(() -> {
+                    while (!stopped) {                  // TODO broken: D15 attempt 1½ — flag-based,
+                        String item = backlog.poll();   // TODO broken: and poll() busy-waits (D14)
+                        if (item != null) {
+                            processor.accept(item);
+                            processed.incrementAndGet();
+                        }
+                    }
+                    // TODO broken: when stopped flips, whatever is still queued is abandoned
+                }, "pipeline-worker-" + w);
+                worker.setDaemon(true);
+                workers.add(worker);
+                worker.start();
+            }
+        }
+
+        @Override
+        public void submit(String item) throws InterruptedException {
+            backlog.put(item);                          // TODO broken: never blocks — no backpressure (D13)
+            backlogPeak.accumulateAndGet(backlog.size(), Math::max);
+        }
+
+        @Override
+        public void shutdownAndDrain() throws InterruptedException {
+            stopped = true;                             // TODO broken: "stop now", not "drain then stop"
+            for (Thread worker : workers) {
+                worker.join();
+            }
+        }
+
+        @Override
+        public long processed() {
+            return processed.get();
+        }
+
+        @Override
+        public int backlogPeak() {
+            return backlogPeak.get();
+        }
+
+        @Override
+        public int liveWorkers() {
+            int alive = 0;
+            for (Thread worker : workers) {
+                if (worker.isAlive()) {
+                    alive++;
+                }
+            }
+            return alive;
         }
     }
 }

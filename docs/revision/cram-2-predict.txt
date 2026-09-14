@@ -1,0 +1,52 @@
+Two @Service beans implement one interface; you inject the interface with no qualifier. Startup?	NoUniqueBeanDefinitionException - fix with @Primary or @Qualifier
+A @RequestBody DTO has constraints but the parameter lacks @Valid. What happens?	Nothing - validation silently never runs, bad data reaches the service
+orphanRemoval=true and a child is removed from the parent's collection. Result?	The child row is DELETED even though the parent lives
+A @Transactional method calls this.otherTransactionalMethod(). Is a new transaction applied?	No - self-invocation bypasses the proxy entirely
+Two threads both pass the stock check, then both decrement. What bug family is this?	Check-then-act race - the checked condition is stale by the act
+You fetch-join two List collections in one JPQL query. Result?	MultipleBagFetchException - use Set, split queries, or batch one
+A worker catches InterruptedException with an empty catch block. Consequence?	The cancellation request is destroyed forever - restore the flag or rethrow
+A plain HashMap is shared by threads; one CPU core pins at 100% forever. Why?	A resize race spliced a bucket cycle - get() spins forever, ignores interrupt
+Thread A holds lock 1 and wants 2; B holds 2 and wants 1. State and fix?	Deadlock - fix with global lock ordering
+A read-lock holder tries to upgrade to the write lock. Result?	Instant self-deadlock - release read, take write, RE-CHECK the condition
+An @Async void method throws. Where does the exception go?	Swallowed - use AsyncUncaughtExceptionHandler or return CompletableFuture
+fixedRate=5s but the task takes 8s on the default scheduler. Behavior?	Runs queue up and fire back-to-back - no overlap, but no gap either
+Auto-commit fires, then the consumer crashes BEFORE processing. Result?	Message lost - committed but never processed
+A duplicate event's ledger insert hits the unique index. What should the handler do?	Skip the work but STILL ack, so the offset advances
+Service saves the order, then crashes before publishing OrderCreated. Fix?	Outbox - write the event row in the same transaction, relay publishes later
+hasRole('ADMIN') but the stored authority is 'ADMIN'. Result?	Denied - hasRole matches ROLE_ADMIN (prefix convention)
+Someone tags request metrics with orderId. What happens to Prometheus?	Cardinality explosion - memory and query blowup
+this.cachedMethod() is called inside the same class. Cache hit?	No - the proxy trap again; the cache is bypassed
+A dependency turns slow; no breaker, generous timeouts. What cascades?	Your threads exhaust waiting, then YOUR callers start failing - repeat upward
+Saga step 3 fails after steps 1 and 2 committed. Recovery?	Compensating transactions undo 1 and 2 - there is no rollback
+WHERE LOWER(email) = ? runs against a plain index on email. Plan?	Full scan - the function kills the index; create an expression index on LOWER(email)
+You forgot pjp.proceed() in an @Around aspect. Symptom?	Every matched method silently never executes and returns null
+You drop a column in the same release as the code that stops using it. Risk?	Old pods still running mid-rollout read it and crash
+You print 0.1 + 0.2 using doubles. Output?	0.30000000000000004
+Your custom validator receives null. What should it return?	true - let @NotNull own null checking
+You add Pageable to a JOIN FETCH query. What does Hibernate actually do?	Loads ALL rows and paginates in memory (HHH90003004)
+The audit log must survive the caller's rollback. Which propagation?	REQUIRES_NEW - own physical tx, commits independently, costs a 2nd connection
+An endpoint loads 100 orders, each rendering items lazily. How many queries?	101 - the classic N+1
+An @Async method reads MDC for the correlation id. What does it see?	Nothing - ThreadLocal does not cross threads without a TaskDecorator
+A non-volatile boolean stop flag: the worker loops forever after stop=true. Why?	The JIT hoisted the read out of the loop - not CPU caches
+8 threads each do volatile n++ 100k times. Final count?	Far below 800k - volatile changes timing, not atomicity
+tryLock retry loops with no jitter keep colliding: threads busy, RUNNABLE, zero progress. Name it.	Livelock - add randomized backoff
+newFixedThreadPool(10), tasks arrive faster than they finish, forever. End state?	Silent backlog in the unbounded queue until OOM
+supplyAsync() without an executor argument runs where?	ForkJoinPool.commonPool - shared, unmanaged, no MDC
+A @Scheduled task throws an uncaught exception every run. Best practice?	Catch everything in the body, log + metric - never let it escape
+6 consumers join a group over a 4-partition topic. What do 2 of them do?	Sit idle - partitions cap parallelism
+A malformed message arrives and there is no ErrorHandlingDeserializer. Result?	The listener crash-loops on the same offset forever
+Your @DataJpaTest passes but the same query fails in prod. What did the test skip?	Flushing - use persistAndFlush, clear, then call the repository
+A @PreAuthorize method is called via this.method(). Does the check run?	No - proxy bypassed, security silently skipped
+The DB is in the liveness probe and the DB has an outage. Fleet behavior?	Restart storm - every pod gets killed for a dependency's problem
+A whole cache population was loaded together with one TTL. What happens at expiry, and the fix?	Avalanche - all keys die together; add TTL jitter
+Should you retry a 400 Bad Request?	Never - deterministic failures cannot succeed on retry
+An already-applied Flyway migration file gets edited. Next startup?	Checksum mismatch - startup fails; fix forward with a new version
+A prototype-scoped bean is @Autowired into a singleton. Behavior?	ONE instance frozen at injection time - use ObjectProvider or @Lookup
+K8s kills the pod mid-deploy before Kafka offsets commit. Prevention?	Graceful shutdown order + terminationGracePeriod longer than the drain
+A JWT is stolen. How do you kill it before expiry?	You mostly cannot - short TTL + refresh, blacklist, or secret rotation
+A worker blocked in take() never exits, though its done flag is volatile. Why?	A parked thread executes nothing, so it re-checks nothing - visible is not awake
+How does that differ from a plain boolean stop flag that never exits?	That one had the read optimised out of the loop; this one is asleep. Same symptom, opposite cause
+Fast producer, slow consumer, unbounded queue, 1.5s. Which loses data?	Neither - but unbounded backlogged 1,000,000 items (~140MB) in 419ms and processed 19x LESS
+1,000,000 hand-offs through ArrayBlockingQueue: faster at 1P/1C or 4P/4C?	4P/4C, 134ms vs 289ms - park/unpark dominates, not lock contention
+You shut a pipeline down by interrupting its workers. What did you just do?	Abandoned everything still queued - prompt, clean, and silently lossy
+Idle consumer pool, zero traffic, pods pinned at 100% CPU. One line is to blame. Which?	A while-loop around poll() - it is a busy-wait; block in take()/poll(timeout) instead

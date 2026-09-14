@@ -6,6 +6,7 @@ import com.locallearn.concurrency.api.Contracts.ComputeOnceCache;
 import com.locallearn.concurrency.api.Contracts.Counter;
 import com.locallearn.concurrency.api.Contracts.Inventory;
 import com.locallearn.concurrency.api.Contracts.InterruptibleWorker;
+import com.locallearn.concurrency.api.Contracts.Pipeline;
 import com.locallearn.concurrency.api.Contracts.StopSignal;
 import com.locallearn.concurrency.contract.BankContract;
 import com.locallearn.concurrency.contract.BoundedQueueContract;
@@ -13,11 +14,13 @@ import com.locallearn.concurrency.contract.ComputeOnceCacheContract;
 import com.locallearn.concurrency.contract.CounterContract;
 import com.locallearn.concurrency.contract.InterruptibleWorkerContract;
 import com.locallearn.concurrency.contract.InventoryContract;
+import com.locallearn.concurrency.contract.PipelineContract;
 import com.locallearn.concurrency.contract.StopSignalContract;
 import com.locallearn.concurrency.solutions.Solutions;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 
+import java.util.function.Consumer;
 import java.util.function.Function;
 
 /**
@@ -88,6 +91,15 @@ class SolutionTests {
     class Sol7 extends BoundedQueueContract {
         @Override protected <T> BoundedQueue<T> newQueue(int capacity) {
             return new Solutions.Sol7Queue<>(capacity);
+        }
+    }
+
+    @Nested
+    @DisplayName("Sol8 — backpressure & draining shutdown")
+    class Sol8 extends PipelineContract {
+        @Override protected Pipeline newPipeline(int capacity, int workers,
+                                                 Consumer<String> processor) {
+            return new Solutions.Sol8Pipeline(capacity, workers, processor);
         }
     }
 }

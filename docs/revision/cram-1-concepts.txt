@@ -1,0 +1,100 @@
+Which HTTP methods are idempotent?	GET, PUT and DELETE
+Which constraint rejects null, empty AND whitespace-only strings?	@NotBlank
+Which side of a bidirectional one-to-many owns the relationship?	The @ManyToOne child - it holds the FK column
+What extra query does Page<T> run that Slice<T> avoids?	A COUNT query
+Which exceptions trigger rollback by default?	Unchecked only - checked exceptions still commit
+How many queries does an N+1 on 100 orders run?	101 - one for parents, one per lazy collection
+What data structure backs MDC, and what is the catch?	A ThreadLocal map - other threads start empty
+What does interrupt() actually do to a running thread?	Sets one boolean flag - nothing else
+Does volatile make count++ safe?	No - the read-modify-write compound still races
+What three steps hide inside count++?	Read, modify, write - with racy gaps between them
+What can synchronized never get wrong that ReentrantLock can?	Leaking the lock - the JVM releases the monitor even on exception
+In what order does ThreadPoolExecutor use core, queue and max?	Fill core threads, then the QUEUE, then grow to max, then reject
+fixedRate vs fixedDelay - each measures from what?	Rate: start of previous run. Delay: end of previous run
+What is the scope of Kafka's ordering guarantee?	A single partition
+What happens to the whole group during a rebalance?	Consumption freezes until partitions are redealt - duplicates possible
+What does @WebMvcTest prove, and what can it never prove?	Routing, statuses, JSON, validation, advice - never persistence
+Is a JWT payload secret?	No - signed for integrity, not encrypted; anyone can read it
+Metrics vs traces vs logs in one line each?	Aggregates / per-request path / detail
+On a @Cacheable hit, does the method body run?	No - the value comes straight from the cache
+What does an OPEN circuit breaker do with calls?	Fails them instantly without calling the dependency
+Why is 2PC avoided across microservices?	Blocking coordinator plus cross-service locks poison availability
+What are @Around's two obligations?	Call pjp.proceed() AND return its result
+Why must singleton beans be stateless?	One instance serves all threads concurrently
+State the left-prefix rule for compound indexes.	Index (a,b) serves a and a+b - never b alone
+How do you handle a sortBy request parameter safely?	Whitelist allowed fields - reject others with 400
+What is the multi-stage Dockerfile split?	JDK+Maven builder stage / JRE-only runtime stage with just the jar
+Deploy vs release?	Deploy = code in prod, dark. Release = flag on. Separable events
+What status code should a successful POST return?	201 Created
+Does Bean Validation cascade into nested objects automatically?	No - the field needs its own @Valid
+Which two JPA association types default to EAGER?	@ManyToOne and @OneToOne
+How does Slice know a next page exists without COUNT?	It fetches pageSize + 1 rows
+What SQL does PESSIMISTIC_WRITE produce?	SELECT ... FOR UPDATE
+Best fix when the view needs no association data at all?	DTO projection - fetch nothing extra
+Why prefer {} placeholders over string concatenation in log calls?	Concatenation builds the string even when the level is off
+What happens to the interrupt flag when InterruptedException is thrown?	It is cleared
+What does a happens-before edge from A to B guarantee?	Everything A wrote is visible to B
+Describe CAS in one sentence.	Set to the new value only if it still equals the expected value
+What is the simplest deadlock prevention?	Acquire locks in one global order
+Why does an unbounded queue neuter maxPoolSize?	The queue never fills, so the pool never grows past core
+How many threads does @Scheduled get by default?	One - all tasks serialize unless you configure a scheduler
+What decides which partition a record lands on?	The record key
+After a message is routed to the DLT, what happens to the offset?	It is committed - the partition unblocks
+What does @InjectMocks do?	Constructs the real class and injects @Mock fields - no Spring context
+When is CSRF protection actually needed?	When credentials attach automatically, i.e. cookies - not Bearer headers
+Why never tag a metric with userId or orderId?	Unbounded tag values explode cardinality
+Cache stampede fix?	Single-flight lock - one caller rebuilds, the rest wait
+What prevents a retry storm?	Exponential backoff plus jitter
+Define a saga in one line.	Local transactions chained by events, undone by compensating actions
+What are Spring AOP's two blind spots?	Non-public methods and self-invocation - proxies see neither
+Bean lifecycle order?	constructor > injection > @PostConstruct > serve > @PreDestroy
+What is the deep-pagination fix?	Keyset: WHERE id > :last (constant) instead of OFFSET (linear)
+Why cap the page-size parameter?	Unbounded size is self-service DoS
+Why tag images with the git SHA instead of :latest?	:latest makes rollback non-deterministic
+What is the column-rename dance?	Add > write both + backfill > read new > drop later (3+ deploys)
+What status code fits a well-formed request that a business rule rejects?	422 Unprocessable Entity
+Why make business exceptions unchecked?	They bubble to the advice and trigger rollback by default
+Why store enums as STRING, not ORDINAL?	Reordering enum constants silently corrupts ORDINAL data
+What is the two-query pattern for paginated fetch joins?	Query a page of IDs, then JOIN FETCH WHERE id IN those IDs
+What is PostgreSQL's default isolation level?	READ COMMITTED
+What does @BatchSize(10) turn 100 lazy collection loads into?	10 IN-queries
+How does a CPU-bound loop stay cancellable?	It must poll isInterrupted() itself
+What fixes broken double-checked locking?	Declare the instance field volatile
+Why does LongAdder beat AtomicLong under heavy contention?	Per-thread cells - no shared cache-line fight
+Why 'while', not 'if', around Condition.await()?	Spurious wakeups and signal steals require re-checking the condition
+Which rejection policy gives natural backpressure?	CallerRunsPolicy - the submitting thread runs the task itself
+What guarantees exactly-one execution of a job across N pods?	ShedLock - a shared lock table
+What caps useful consumer count within one group?	The partition count - extras sit idle
+What actually prevents duplicate processing: the exists() check or the index?	The unique index on eventId - the check is a TOCTOU race
+What does Replace.NONE mean in a @DataJpaTest?	Keep MY datasource (the container) - do not auto-swap H2
+Rank browser storage options for tokens.	HttpOnly+SameSite cookie > in-memory > localStorage
+Failing liveness vs failing readiness - consequence of each?	Liveness: pod restarted. Readiness: traffic drained, pod lives
+Cache avalanche fix?	TTL jitter - never let a population expire together
+What is a bulkhead?	A cap on concurrent calls per dependency - ship-compartment isolation
+What is the outbox pattern's atomic pair?	Business row and event row written in ONE local transaction
+@Transactional, @Cacheable and @Async share what machinery?	The same runtime proxy - same rules, one mental model
+What does wrapping an indexed column in a function do?	Kills index use - create an expression index instead
+K8s requests vs limits?	Scheduler reservation vs OOM/throttle ceiling
+What invariant must every migration respect mid-rollout?	Old and new code share one schema simultaneously
+Why must money use BigDecimal, never double?	Binary floating point cannot represent decimal fractions exactly
+What should ddl-auto be in production, and why?	none - Flyway is the only schema owner
+Which HTTP status maps an optimistic-lock conflict?	409 Conflict - tell the client to refresh and retry
+What happens to daemon threads at JVM exit?	Killed in place - no finally, no flush
+What does the final-field guarantee give you?	Safe publication after the constructor with zero synchronization
+What is the ABA problem?	CAS compares values, not history - A to B back to A slips through
+Producer settings for must-not-lose events?	acks=all plus enable.idempotence=true
+Why BCrypt for passwords?	Deliberately slow, with a per-password salt
+Cache entities or DTOs?	DTOs - never managed entities
+When should a consumer commit its offset?	Manually, only after processing succeeds
+What delivery semantics does commit-after-process give?	At-least-once - so handlers must be idempotent
+What are the only three options when a producer outruns a consumer?	Block (backpressure), drop (shed), or grow the backlog (OOM later)
+Is an unbounded queue a buffer?	No - an OutOfMemoryError with a delay fuse; you chose "grow" without noticing
+poll() vs take() vs poll(timeout)?	null now (looping on it busy-waits) / parks but deaf to flags / parks AND wakes - use this
+What is a poison pill?	A sentinel sent through the same FIFO as the data - arriving after every real item
+Why is a poison pill compared with == and not equals()?	It must be THAT instance, so no real item can impersonate it
+How many poison pills do N consumers need?	N - each pill stops exactly one taker
+What is SynchronousQueue's capacity?	Zero - a rendezvous; offer() fails unless a taker is already parked
+Which pool is built on SynchronousQueue, and why?	newCachedThreadPool - a failed offer means "nobody free", so spawn a thread
+ArrayBlockingQueue vs LinkedBlockingQueue internals?	One lock + pre-allocated array vs two locks (put/take) + a node allocated per item
+Which BlockingQueue is not FIFO?	PriorityBlockingQueue - and it is unbounded too; both facts bite
+What backs ScheduledThreadPoolExecutor?	A DelayQueue - elements stay invisible until their delay expires

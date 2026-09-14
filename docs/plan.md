@@ -67,22 +67,51 @@
 > is, what the JVM guarantees about memory, and why the bugs happen.
 > **Module:** `concurrency-lab/` (standalone, Java 21). **Docs:** `docs/02-concurrency/`
 
+Modules are grouped by **problem schema, not by API** — you index concurrency
+knowledge by "what problem does this solve", and grouping by class name produces
+recognition without recall. Each block's artifact feeds the next, so revision
+happens through *use*: topic 5's queue becomes topic 8's thread pool, which
+becomes topic 10's incident.
+
+### Block A — Foundations: what a thread is and why the bugs happen ✅
+
 | # | Topic | Demos | Exercises | Time | Status |
 |---|------|-------|-----------|------|--------|
-| A | Threads, lifecycle, interruption & cancellation | D1–D3 | Ex4 | 1.5hr | ✅ |
-| B | Java Memory Model: visibility, reordering, safe publication | D4–D6 | Ex2 | 2hr | ✅ |
-| C | Races, atomicity, CAS, ABA, LongAdder | D7–D9 | Ex1, Ex3 | 2hr | ✅ |
-| D | Locks, deadlock, ReadWriteLock, Condition | D10–D12 | Ex5, Ex6, Ex7 | 2.5hr | ✅ |
-| E | Executors internals, ThreadLocal, concurrent collections | — | — | 2hr | ⬜ |
-| F | Coordination: latches, barriers, semaphores, phasers | — | — | 1.5hr | ⬜ |
-| G | ForkJoinPool, work-stealing, parallel streams | — | — | 1.5hr | ⬜ |
-| H | Virtual threads & structured concurrency (Java 21) | — | — | 2hr | ⬜ |
-| I | Diagnostics: thread dumps, jcmd, JFR, false sharing | — | — | 1.5hr | ⬜ |
+| 1 | Threads, lifecycle, interruption & cancellation | D1–D3 | Ex4 | 1.5hr | ✅ |
+| 2 | Java Memory Model: visibility, reordering, safe publication | D4–D6 | Ex2 | 2hr | ✅ |
+| 3 | Races, atomicity, CAS, ABA, LongAdder | D7–D9 | Ex1, Ex3 | 2hr | ✅ |
+| 4 | Locks, deadlock, ReadWriteLock, Condition | D10–D12 | Ex5, Ex6, Ex7 | 2.5hr | ✅ |
 
-**Built so far:** 12 runnable demos that visibly misbehave (a loop that never
+### Block B — Moving work between threads
+
+| # | Topic | Demos | Exercises | Time | Status |
+|---|------|-------|-----------|------|--------|
+| 5 | Hand-off: blocking queues, backpressure, draining shutdown | D13–D15 | Ex8 | 2hr | ✅ |
+| 6 | Shared structures: ConcurrentHashMap, CopyOnWrite, ThreadLocal | — | — | 2hr | ⬜ |
+| 7 | Coordination: latch · barrier · semaphore · phaser (as a 2×2) | — | — | 1.5hr | ⬜ |
+
+### Block C — Who runs the work
+
+| # | Topic | Demos | Exercises | Time | Status |
+|---|------|-------|-----------|------|--------|
+| 8 | ThreadPoolExecutor internals: core → **queue** → max → reject | — | — | 2hr | ⬜ |
+| 9 | ForkJoin, parallel streams, virtual threads, structured concurrency | — | — | 2.5hr | ⬜ |
+
+### Block D — Capstone
+
+| # | Topic | Demos | Exercises | Time | Status |
+|---|------|-------|-----------|------|--------|
+| 10 | **The incident** — diagnose a planted deadlock + pool exhaustion + ThreadLocal leak from thread dumps alone (jstack, jcmd, JFR) | — | — | 1.5hr | ⬜ |
+
+Topic 10 is a simulation, not a topic. You get a broken service and the tools,
+with no label saying which mechanism applies — which is the step interviews and
+production actually test, and the one a topic-by-topic curriculum never trains.
+
+**Built so far:** 15 runnable demos that visibly misbehave (a loop that never
 exits, 92% memory-reordering anomalies, a self-inflicted deadlock the JVM
-detects, a `HashMap` that spins forever) + 7 broken exercises with contract
-tests that fail until fixed. 16 reference tests all green.
+detects, a `HashMap` that spins forever, a queue that eats 140 MB in 0.4s) +
+8 broken exercises with contract tests that fail until fixed. 19 reference
+tests all green.
 
 ```bash
 cd concurrency-lab && ./mvnw test -Dtest=ExerciseTests
