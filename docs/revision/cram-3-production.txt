@@ -36,6 +36,11 @@ Which verb should a production consumer loop use?	poll(timeout, unit) - parks ef
 Which pool number should you size first?	The queue - it decides whether maxPoolSize is reachable at all
 Total pool capacity before rejection?	maxPoolSize + queueCapacity
 Which rejection policy IS backpressure?	CallerRunsPolicy - the submitter runs it, so its arrival rate drops to zero
+Decision rule for a compound ConcurrentHashMap update?	If the new value depends on the old one, it must be ONE call - merge/compute/putIfAbsent
+Correct ThreadLocal cleanup on a pooled thread?	remove() in a finally - never set(null), which leaves the map entry behind
+When is CopyOnWriteArrayList the right structure?	Rare writes on a small list (listeners) - not anything that grows per request
+Defense against an undetectable latch/semaphore hang?	await(timeout) / tryAcquire(timeout), plus gauging getCount()/availablePermits()
+Where must Semaphore release() and CountDownLatch countDown() go?	In a finally - a permit leak or a stuck round is otherwise permanent and silent
 Flag to find virtual-thread pinning?	-Djdk.tracePinnedThreads=full
 Rule that makes pinning impossible?	Never hold a monitor across a blocking call
 Two commands for a thread dump?	jcmd <pid> Thread.print -l and jstack <pid> - take TWO, 30s apart

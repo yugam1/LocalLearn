@@ -98,6 +98,23 @@ Which pool is built on SynchronousQueue, and why?	newCachedThreadPool - a failed
 ArrayBlockingQueue vs LinkedBlockingQueue internals?	One lock + pre-allocated array vs two locks (put/take) + a node allocated per item
 Which BlockingQueue is not FIFO?	PriorityBlockingQueue - and it is unbounded too; both facts bite
 What backs ScheduledThreadPoolExecutor?	A DelayQueue - elements stay invisible until their delay expires
+Does a thread-safe map make a sequence of calls atomic?	No - only each individual call, and it can't know which of yours belong together
+When must a map update be a single call, not two?	Whenever the new value depends on the old one - use merge/compute/putIfAbsent
+What does compute() returning null do to the entry?	Removes it - atomic delete-at-zero, no second remove() call needed
+Three ways an unsynchronized HashMap breaks under concurrent writes?	Lost entries, a put() that never returns, or a ClassCastException
+Is a corrupted concurrent HashMap a visibility bug?	No - marking the field volatile fixes nothing; the race is inside the table itself
+What kind of estimate does ConcurrentHashMap.size() give while busy?	An overcount - sharded per-bin counts summed one cell at a time
+Why does CopyOnWriteArrayList cost O(n) per write?	Every mutation copies the entire backing array
+When is CopyOnWriteArrayList the right choice?	Rare writes (events) on a small list, e.g. listeners - not anything that accumulates
+What does a ThreadLocal value's lifetime actually track?	The thread, not the request - and pooled threads outlive the request on purpose
+Why remove(), never set(null), to clear a ThreadLocal?	set(null) leaves the entry behind; only remove() deletes it
+What is the 2x2 that organizes latch/barrier/semaphore/phaser?	One-shot vs reusable, crossed with waiting for events vs waiting for parties
+Can a CountDownLatch be reused across rounds?	No - countDown() at zero is a no-op and await() at zero returns instantly, silently
+Where must countDown() and release() always go?	In a finally - a worker that throws before reaching it hangs everyone waiting
+What does a bare release() with no matching acquire() do to a Semaphore?	Mints a permit out of nothing, raising the effective limit with no exception
+What happens to a Semaphore permit lost on an exception path?	It is gone permanently and cumulatively - the pool shrinks and never recovers
+Why does a latch or semaphore deadlock produce no deadlock report?	Cycle detection needs an owner to draw an edge to, and permits/counts have none
+How do you defend against an undetectable latch/semaphore hang?	await(timeout) / tryAcquire(timeout), plus gauging getCount()/availablePermits()
 In what order does a pool consult core, queue and max?	core → QUEUE → max → reject; the queue is tried BEFORE the pool grows
 Why is the queue tried before growing the pool?	A queue slot is a pointer; a thread is ~1MB plus a scheduler entity
 When is maxPoolSize effectively dead code?	When the queue is large - it never fills, so the growth step never runs

@@ -1,12 +1,12 @@
 # 🎤 Mock Interview — Interleaved Round
 
-> **How to use:** 37 questions, deliberately shuffled across every phase —
+> **How to use:** 41 questions, deliberately shuffled across every phase —
 > interleaving is the point (blocked practice feels better; mixed practice
 > retains better). Answer OUT LOUD in full sentences before opening anything.
 > Score yourself: ✅ fluent · 🟡 got there slowly · ❌ missed. Anything 🟡/❌ →
 > that doc's Retrieval Gym goes back on your schedule.
 >
-> Rounds: do 1–19 in one sitting, 20–37 in another. Re-shuffle by starting from
+> Rounds: do 1–20 in one sitting, 21–41 in another. Re-shuffle by starting from
 > a random number.
 
 ---
@@ -69,23 +69,31 @@
 
 **28.** Your consumer pool is idle overnight yet the pods sit at 100% CPU. One line of code is responsible. What is it, how would you confirm it from a thread dump, and what replaces it? *(→ 02-concurrency/05, 02-concurrency/01)*
 
-**29.** Your pool is `core=2, max=10, queue=100`. Sixty tasks arrive at once and monitoring shows **two** active threads. Your teammate raises `maxPoolSize` to 50 and nothing changes. Explain why, and tell me which number they should actually have changed. *(→ 02-concurrency/08)*
+**29.** A per-key counter does `map.put(k, map.get(k) + 1)` from 16 threads against a `ConcurrentHashMap`. It still loses 0.7–13.3% of increments. The map is thread-safe — explain exactly what is still racing, and give the one-call fix. *(→ 02-concurrency/06)*
 
-**30.** Under a load spike, Pool A (DiscardPolicy) reports fast, healthy response times and Pool B (CallerRunsPolicy) reports latency climbing to 600ms+. Which one is actually failing, and how would you tell from metrics alone? *(→ 02-concurrency/08, 02-concurrency/05)*
+**30.** A `ThreadLocal` correlation id is cleared with `ID.set(null)` inside a `finally`. Is anything leaked? Walk me through what `set(null)` actually does to the map entry versus `remove()`. *(→ 02-concurrency/06)*
 
-**31.** `newFixedThreadPool` and `newCachedThreadPool` each have one unbounded dimension. Name both, say what each one's OOM looks like, and explain what `SynchronousQueue` has to do with the second. *(→ 02-concurrency/08, 02-concurrency/05)*
+**31.** Six workers run five rounds sharing one `CountDownLatch(6)` created once, reused every round. Round 1 looks perfect. What happens from round 2 on, and why is there no exception or hang to alert you? *(→ 02-concurrency/07)*
 
-**32.** A colleague converts a hot loop to `list.parallelStream()` and an unrelated endpoint elsewhere in the service gets 8× slower. Explain the mechanism, and why no amount of tuning that endpoint will fix it. *(→ 02-concurrency/09)*
+**32.** Two threads are each parked waiting on the other's `Semaphore`. `jcmd <pid> Thread.print` shows both as `WAITING`, and the deadlock detector reports nothing. Explain exactly why — in terms of what cycle detection actually needs. *(→ 02-concurrency/07, 02-concurrency/04)*
 
-**33.** You migrate 10,000 blocking calls from a 12-thread pool to virtual threads and throughput barely moves, though the benchmark promised ~550×. The code uses `synchronized` around each call. Explain what is happening, how you would confirm it in one JVM flag, and the fix. *(→ 02-concurrency/09, 02-concurrency/04)*
+**33.** Your pool is `core=2, max=10, queue=100`. Sixty tasks arrive at once and monitoring shows **two** active threads. Your teammate raises `maxPoolSize` to 50 and nothing changes. Explain why, and tell me which number they should actually have changed. *(→ 02-concurrency/08)*
 
-**34.** A service is wedged. `jcmd Thread.print` shows 15 threads permanently stuck, and the JVM reports exactly **one** deadlock covering **two** of them. What are the other 13 doing, and why does the JVM's own detector not see them? *(→ 02-concurrency/10, 02-concurrency/04)*
+**34.** Under a load spike, Pool A (DiscardPolicy) reports fast, healthy response times and Pool B (CallerRunsPolicy) reports latency climbing to 600ms+. Which one is actually failing, and how would you tell from metrics alone? *(→ 02-concurrency/08, 02-concurrency/05)*
 
-**35.** Every worker in your pool is `WAITING` inside `FutureTask.awaitDone`, the queue has items, and nothing has thrown or been rejected. Name the bug, explain why it is completely silent, and give the rule that prevents it. *(→ 02-concurrency/10, 02-concurrency/08)*
+**35.** `newFixedThreadPool` and `newCachedThreadPool` each have one unbounded dimension. Name both, say what each one's OOM looks like, and explain what `SynchronousQueue` has to do with the second. *(→ 02-concurrency/08, 02-concurrency/05)*
 
-**36.** For two weeks your service has occasionally answered requests with a *different* customer's data. No errors, no hang, healthy dashboards. Where do you look, and why would a thread dump, a deadlock detector and a profiler all have shown you nothing? *(→ 02-concurrency/10, 02-concurrency/06)*
+**36.** A colleague converts a hot loop to `list.parallelStream()` and an unrelated endpoint elsewhere in the service gets 8× slower. Explain the mechanism, and why no amount of tuning that endpoint will fix it. *(→ 02-concurrency/09)*
 
-**37.** A pod sits at 100% CPU. Your colleague says "it's busy, scale it up." How do you establish in two numbers whether it is doing work or burning a core at nothing — and what distinguishes a busy-wait from a livelock? *(→ 02-concurrency/10, 02-concurrency/04)*
+**37.** You migrate 10,000 blocking calls from a 12-thread pool to virtual threads and throughput barely moves, though the benchmark promised ~550×. The code uses `synchronized` around each call. Explain what is happening, how you would confirm it in one JVM flag, and the fix. *(→ 02-concurrency/09, 02-concurrency/04)*
+
+**38.** A service is wedged. `jcmd Thread.print` shows 15 threads permanently stuck, and the JVM reports exactly **one** deadlock covering **two** of them. What are the other 13 doing, and why does the JVM's own detector not see them? *(→ 02-concurrency/10, 02-concurrency/04)*
+
+**39.** Every worker in your pool is `WAITING` inside `FutureTask.awaitDone`, the queue has items, and nothing has thrown or been rejected. Name the bug, explain why it is completely silent, and give the rule that prevents it. *(→ 02-concurrency/10, 02-concurrency/08)*
+
+**40.** For two weeks your service has occasionally answered requests with a *different* customer's data. No errors, no hang, healthy dashboards. Where do you look, and why would a thread dump, a deadlock detector and a profiler all have shown you nothing? *(→ 02-concurrency/10, 02-concurrency/06)*
+
+**41.** A pod sits at 100% CPU. Your colleague says "it's busy, scale it up." How do you establish in two numbers whether it is doing work or burning a core at nothing — and what distinguishes a busy-wait from a livelock? *(→ 02-concurrency/10, 02-concurrency/04)*
 
 ---
 
@@ -93,6 +101,6 @@
 
 | ✅ count | Verdict |
 |---|---|
-| 33–37 | Interview-ready on covered material — maintain with R4 passes only |
-| 25–32 | Solid — drill the 🟡/❌ docs' gyms this week |
-| < 25 | Reset R1/R2 passes on every ❌ topic before booking anything |
+| 37–41 | Interview-ready on covered material — maintain with R4 passes only |
+| 28–36 | Solid — drill the 🟡/❌ docs' gyms this week |
+| < 28 | Reset R1/R2 passes on every ❌ topic before booking anything |

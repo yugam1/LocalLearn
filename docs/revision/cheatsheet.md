@@ -310,6 +310,70 @@ BOUNDED    produced    52,958 | consumed 51,934 | backlog     1,024        (~144
 
 ---
 
+## 02.6 · Shared Structures: ConcurrentHashMap, CopyOnWrite, ThreadLocal
+*Full doc: [`../02-concurrency/06-shared-structures.md`](../02-concurrency/06-shared-structures.md)*
+
+**Mental model:** A thread-safe collection makes **each call** atomic. It cannot
+make **your sequence of calls** atomic, because it has no idea which of your
+calls belong together. So `ConcurrentHashMap` fixes the corruption and leaves
+the race — the same check-then-act bug as D8 and Ex6, third outfit. There are
+exactly three answers to "two threads touch this": **coordinate** it (topics
+3–4), **copy** it (`CopyOnWriteArrayList`), or **confine** it (`ThreadLocal`).
+The last two look free and are not.
+
+```
+HashMap, 8 threads x 5,000 distinct keys (expect 40,000):
+    lost 5.3%–31.9%  ·  or a worker never returns from put()  ·  or ClassCastException
+ConcurrentHashMap, map.put(k, map.get(k)+1):     still loses 0.7%–13.3%
+ConcurrentHashMap, map.merge(k, 1L, Long::sum):  exact, every trial
+                                                 ↑ the map never changed. The CALL did.
+```
+
+**The decision rule:** **if the new value depends on the old one, it must be one
+call** — `merge`, `compute`, `computeIfAbsent`, `putIfAbsent`, `replace(k, old,
+new)`. Two calls is a race no matter how thread-safe each one is.
+
+**Five rules you must never get wrong:**
+1. `containsKey`-then-`put` and `get`-then-`put` are **check-then-act** — same bug as D8's overselling and Ex6's stampede. Measured: 11–15% of 200 trials elected more than one "first" leader.
+2. The mapping function runs **under the bin lock**. Keep it short, never touch the same map inside it, and cache a `CompletableFuture` instead of the value for a slow load.
+3. `size()` on a busy `ConcurrentHashMap` is an **estimate**. Fine for a dashboard; `if (map.size() < CAP) put(...)` is D8 with a lie in the check.
+4. `CopyOnWriteArrayList` costs **O(n) per write**, so building one is O(n²) — measured 1.1 µs/element at 4,000 → 19.6 µs/element at 64,000. Right for listener lists, catastrophic for anything that accumulates.
+5. A `ThreadLocal` value lives as long as the **thread**, and a pooled thread outlives your request on purpose. `remove()` in a `finally` — and `remove()`, never `set(null)`, which leaves the entry behind.
+
+*Run first: D16 (three different ways a HashMap breaks), D17 (the same old bug on a thread-safe map, and per-bin locking measured), D18 (copy-on-write's real bill, and a tenant id leaking into the next request).*
+
+---
+
+## 02.7 · Coordination: Latch, Barrier, Semaphore, Phaser
+*Full doc: [`../02-concurrency/07-coordination.md`](../02-concurrency/07-coordination.md)*
+
+**Mental model:** These are not four APIs. They are **one 2×2**, and the two
+questions are *is it reusable?* and *am I waiting for events to happen, or for
+parties to arrive?* Get the axes and you never have to memorise a method list
+again.
+
+```
+                 │ waiting for EVENTS to happen  │ waiting for PARTIES to arrive
+ ────────────────┼───────────────────────────────┼──────────────────────────────
+  ONE-SHOT       │ CountDownLatch                │ (a latch used as a start gate)
+  REUSABLE       │ Semaphore — permits, D20      │ CyclicBarrier · Phaser
+```
+
+**The decision rule:** **does it have to happen more than once?** If yes, you
+cannot use a latch — no amount of care makes a one-shot counter reusable, and
+the failure is silent.
+
+**Five rules you must never get wrong:**
+1. A latch **counts down to zero and stays there**. `countDown()` on zero is a no-op; `await()` on zero returns instantly. Reuse it across rounds and round 2 has **no barrier at all** — measured: 6 workers in round 1, then 1, 1, 1, 1.
+2. `countDown()` and `release()` go in a **`finally`**. The commonest cause of a production hang is not a cycle; it is one worker that threw on the way to its `countDown()`.
+3. A `Semaphore` counts **permits to use a resource**, not events. Permits are anonymous: any thread may release, `acquire()` is **not reentrant**, and `release()` without `acquire()` mints a permit out of nothing.
+4. A leaked permit is **permanent and cumulative**. Measured: 4 exceptions destroyed a 4-permit pool, and it never recovered.
+5. **A latch or semaphore deadlock produces no deadlock report.** Detection needs an *owner* to draw an edge to, and permits and latch counts deliberately have none. Use `await(timeout)` / `tryAcquire(timeout)`, and gauge `getCount()` / `availablePermits()`.
+
+*Run first: D19 (the 2×2, and a latch silently ceasing to synchronise), D20 (permits, and a pool dying one exception at a time), D21 (three deadlocks, one diagnosed).*
+
+---
+
 ## 02.8 · ThreadPoolExecutor Internals
 *Full doc: [`../02-concurrency/08-threadpool-internals.md`](../02-concurrency/08-threadpool-internals.md)*
 

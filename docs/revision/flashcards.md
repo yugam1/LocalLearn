@@ -196,6 +196,63 @@ DelayQueue	Items invisible until their delay expires — how ScheduledThreadPool
 PriorityBlockingQueue	Unbounded and NOT FIFO — both facts bite
 ```
 
+## 02.6 · Shared Structures: ConcurrentHashMap, CopyOnWrite, ThreadLocal
+
+```
+Thread-safe collection guarantees	Each CALL is atomic. NOT your sequence of calls — it can't know which belong together
+CHM + get-then-put, measured	Still lost 0.7–13.3% of 32,000 — it's D7's count++ with ceremony
+The decision rule	New value depends on old value ⇒ it must be ONE call (merge/compute/putIfAbsent)
+compute returning null	REMOVES the entry — how you delete-at-zero atomically instead of a second remove()
+containsKey-then-put, measured	>1 "first" leader in 11–15% of 200 trials, worst 7. putIfAbsent: 200/200 correct
+Same bug, three outfits	D8 stock-- · Ex6 cache stampede · CHM containsKey-then-put
+HashMap concurrent writes	Three outcomes: lost 2–32% · a worker never returns from put() · ClassCastException Node→TreeNode
+Why HashMap loses entries	Bin head overwritten + puts landing inside someone else's resize (lumpy, not smooth)
+Is it a visibility bug?	NO. volatile on the map field fixes nothing — the race is on the internal table, 2 objects down
+CHM size()	Estimate: sharded cells summed one at a time. Overcounted by up to 80,805 while busy, exact when quiescent
+size() check-then-act	`if (map.size() < CAP) put()` overshot by up to 5 — D8 with a lie in the check
+CHM iterator	Weakly consistent: never throws, never a snapshot. HashMap's is fail-fast (a bug DETECTOR, not safety)
+Per-bin vs global lock, measured	8 cold keys, 200ms loader: synchronized 1,621ms vs computeIfAbsent 205ms (~8x)
+Mapping function rules	Short (bin lock held) · never touch the same map · slow load ⇒ cache a CompletableFuture
+Recursive update	IllegalStateException — but ONLY when keys share a bin (0&16 threw, 0&7 didn't). Absence proves nothing
+COW write cost, measured	1.1µs/element at 4k → 19.6µs/element at 64k. O(n) per write, O(n^2) to build
+COW decision rule	Writes are rare EVENTS and the list is small (listeners) — NOT "reads dominate"
+COW iterator	True snapshot at iterator() · it.remove() throws UnsupportedOperationException
+ThreadLocal is	A map on the Thread. Value lives as long as the THREAD — and pool threads outlive your request
+ThreadLocal pool leak	Request 1 set tenant, request 2 read it. Nothing threw. remove() in a FINALLY
+remove() vs set(null)	set(null) leaves the ENTRY (proved: initialValue doesn't re-run). remove() deletes it
+ThreadLocal + another thread	Invisible. @Async/CompletableFuture lose MDC unless a task decorator copies it
+```
+
+## 02.7 · Coordination: Latch, Barrier, Semaphore, Phaser
+
+```
+The whole topic	A 2x2: one-shot vs reusable  X  waiting for EVENTS vs waiting for PARTIES
+The decision rule	Does it happen more than once? Then it cannot be a latch
+CountDownLatch	One-way counter. Counters and waiters are DIFFERENT threads, any numbers. No reset, by design
+Reused latch, measured	Round 1: 6 of 6. Rounds 2-5: 1 of 6. No exception, no hang — just silently no barrier
+Why no reset() on a latch	Unanswerable race: who resets, and what about the thread still inside await()?
+The two latch idioms	Start gate (1 counter, N waiters) · Wait-for-N (N counters, 1 waiter) — both in Stress.java
+countDown()/release() go	In a FINALLY. A worker that throws on the way there hangs the waiter, undiagnosably
+CyclicBarrier	N parties rendezvous; arriving IS waiting; fixed count; re-arms itself with no reset() call
+Barrier action	Runs on the LAST arriver, once per round, everyone else still parked — the only exact place to merge
+BrokenBarrierException	All-or-nothing announced: one party's timeout wakes EVERYONE, including the no-deadline waiter
+Phaser	CyclicBarrier + register()/arriveAndDeregister() at runtime. Know it exists; reach for barrier first
+Semaphore counts	PERMITS TO USE A RESOURCE — not events (latch), not ownership (lock)
+Semaphore is not a lock	Any thread may release · NOT reentrant (blocks against itself) · release() with no acquire() MINTS a permit
+release() minting, measured	2 permits + two bare release() = 4 permits, no exception. Your "limit of 4" is now 5, then 6
+Permit leak, measured	4 exceptions destroyed a 4-permit pool -> 0 forever. With release() in a finally: 4, untouched
+Shape of the leak failure	Cumulative and irreversible — a slow slide, not a cliff, ending in a green health check and no service
+acquire vs tryAcquire	Topic 5's block vs drop. Blocking's backlog is parked threads NO dashboard shows you
+tryAcquire shedding, measured	32 callers / 4 permits: shed 88-90% — countable rejections you can alert on
+Semaphore fairness, measured	Non-fair 49-73ms vs fair 4,813-5,284ms (67-104x). Ratio is noisy; ~2 orders of magnitude is not
+THE anchor failure	Latch/semaphore deadlock = WAITING threads, no deadlock report, health check green
+Why it's undetectable	Cycle detection needs an OWNER to draw an edge to. Permits and latch counts have none, deliberately
+Thread-dump signature	WAITING + LockSupport.park + CountDownLatch$Sync / Semaphore$NonfairSync + owned-by: NOBODY
+The four gauges	latch.getCount() · sem.availablePermits() · sem.getQueueLength() · barrier.getNumberWaiting()
+Prevention	await(timeout) / tryAcquire(timeout) — measured false at 203ms instead of parking forever
+Two semaphores, opposite order	D11's lock-ordering bug exactly. Same Coffman conditions, same fix — and zero warning
+```
+
 ## 02.8 · ThreadPoolExecutor Internals
 
 ```

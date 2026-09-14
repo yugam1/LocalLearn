@@ -24,8 +24,13 @@ concurrency-lab/
 │   ├── t03atomicity/  D7–D9   lost updates, check-then-act, CAS & LongAdder
 │   ├── t04locks/      D10–D12 synchronized vs Lock, deadlock, RWLock & Condition
 │   ├── t05handoff/    D13–D15 unbounded backlog, the queue family, draining shutdown
-│   ├── api/           Contracts.java — the 8 interfaces you implement
-│   ├── exercises/     Exercises.java  ← YOUR WORK GOES HERE (all 8 are broken)
+│   ├── t06shared/     D16–D18 HashMap corruption, atomic map updates, copy vs confine
+│   ├── t07coordination/ D19–D21 latch vs barrier vs semaphore, permit leaks, silent hangs
+│   ├── t08pools/      D22–D24 pool growth order, rejection policies, sizing & lost exceptions
+│   ├── t09parallel/   D25–D28 fork/join, parallel streams, virtual threads, structured concurrency
+│   ├── t10diagnostics/ D29–D31 reading thread dumps, the incident, diagnosing it
+│   ├── api/           Contracts.java — the 15 interfaces you implement
+│   ├── exercises/     Exercises.java  ← YOUR WORK GOES HERE (all 15 are broken)
 │   └── solutions/     Solutions.java  ← reference, with the reasoning
 └── src/test/java/com/locallearn/concurrency/
     ├── contract/      one abstract test per exercise
@@ -45,8 +50,8 @@ cd concurrency-lab
 java -cp target/classes com.locallearn.concurrency.t03atomicity.D7_LostUpdates
 
 # Work the exercises
-./mvnw test -Dtest=SolutionTests        # sanity: these must all pass (~11s)
-./mvnw test -Dtest=ExerciseTests        # your work: all 7 fail on a fresh checkout
+./mvnw test -Dtest=SolutionTests        # sanity: all 15 must pass
+./mvnw test -Dtest=ExerciseTests        # your work: all 15 fail on a fresh checkout
 ./mvnw test -Dtest='ExerciseTests$Ex1'  # one exercise at a time
 ```
 
@@ -72,12 +77,11 @@ predict what it will print, *then* read. Revision: Core Card + Gym only (~6 min)
 | 3 | [Races, atomicity & CAS](03-atomicity-races-cas.md) | D7–D9 | Ex1, Ex3 | `volatile` ≠ atomic. `count++` is three operations |
 | 4 | [Locks, deadlock & conditions](04-locks-deadlock-conditions.md) | D10–D12 | Ex5, Ex6, Ex7 | Deadlock is never "two locks" — it's **two orders** |
 | 5 | [Hand-off: blocking queues & backpressure](05-handoff-blocking-queues.md) | D13–D15 | Ex8 | A queue doesn't equalise speeds — it picks **block / drop / grow** |
+| 6 | [Shared structures: ConcurrentHashMap, CopyOnWrite, ThreadLocal](06-shared-structures.md) | D16–D18 | Ex9, Ex10 | If the new value depends on the old one, it must be **one call** — `merge`, `compute`, `putIfAbsent` |
+| 7 | [Coordination: latch, barrier, semaphore, phaser](07-coordination.md) | D19–D21 | Ex11, Ex12 | They're one **2×2** — *events or parties?* × *one-shot or reusable?* |
 | 8 | [ThreadPoolExecutor internals](08-threadpool-internals.md) | D22–D24 | Ex13 | The **queue is tried before the pool grows** — that one inversion explains everything |
 | 9 | [ForkJoin, parallel streams & virtual threads](09-forkjoin-parallel-virtual-threads.md) | D25–D28 | Ex14 | Ask **"what kind of work is this?"** before choosing anything |
 | 10 | [Diagnostics & the capstone incident](10-diagnostics-incident.md) | D29–D31 | Ex15 | Every instrument has a **blind spot**, and that's where the expensive incidents live |
-
-*(Topics 6 and 7 — shared structures and coordination — are in progress and slot
-in between 5 and 8.)*
 
 **Topic 10 is the final, and it is a simulation rather than a topic.** Every
 other page names its mechanism in the title, so you always know which chapter
@@ -101,6 +105,10 @@ Each one starts broken, and each is a bug you watched happen in a demo.
 | 6 | `Ex6Cache` | cache stampede + a `HashMap` shared across threads | D12 |
 | 7 | `Ex7Queue` | no locking, no blocking, overwrites when full | D12 |
 | 8 | `Ex8Pipeline` | unbounded backlog · `poll()` spin · stop-flag shutdown drops the queue | D13–D15 |
+| 9 | `Ex9EventCounts` | `get`-then-`put` / `containsKey`-then-act on a `ConcurrentHashMap` — each call is atomic, the pair isn't | D17 |
+| 10 | `Ex10Context` | a plain `static` field shared by every thread, not thread-confined at all — and not restored on the exceptional path | D18 |
+| 11 | `Ex11Rounds` | reuses a `CountDownLatch` across rounds — round 2 has no barrier at all | D19 |
+| 12 | `Ex12Pool` | `tryAcquire()` never waits and the task runs regardless — and `release` isn't in a `finally`, so a throwing task leaks the permit | D20 |
 | 13 | `Ex13Pool` | submission rule inverted — grows to max *before* trying the queue | D22, D24 |
 | 14 | `Ex14Runner` | one executor strategy applied to both CPU-bound and IO-bound work | D25–D27 |
 | 15 | `Ex15IncidentService` | **four** planted defects, one each from topics 4, 5+8, 6 and 5 — and you are not told which | D29–D31 |
@@ -148,6 +156,18 @@ Real numbers from the demos, so you know what to expect:
 | D15 `volatile` flag + `take()` shutdown | **never exits** — parked in `take()`, `alive=true` after 2s |
 | D15 `interrupt()` shutdown | 8,744 of 10,000 processed — **1,256 abandoned** |
 | D15 poison pill | **10,000 of 10,000** — exact |
+| D16 `HashMap`, 8 threads × 5,000 distinct keys | lost **5.3%–31.9%** of 40,000 entries — or a worker never returns from `put()`, or `ClassCastException` |
+| D17 `ConcurrentHashMap`, `get`-then-`put` | still loses **0.7%–13.3%** of 32,000 increments — the map didn't change, the call did |
+| D17 `ConcurrentHashMap`, `merge(k, 1L, Long::sum)` | **exact, every trial** |
+| D17 per-bin lock vs global lock, 8 cold keys, 200ms loader | `synchronized(map)` 1,621–1,652 ms vs `computeIfAbsent` 202–211 ms (**~8×**) |
+| D18 `CopyOnWriteArrayList` write cost | 1.1 µs/element at 4,000 → **19.6 µs/element at 64,000** — O(n) per write, O(n²) to build |
+| D18 `ThreadLocal` correlation id leaking onto pooled threads | tenant id from request N still visible at the start of request N+1 |
+| D19 `CountDownLatch` reused across rounds | round 1: 6 workers arrived; rounds 2–5: **1 worker each** — no barrier at all |
+| D19 one `countDown()` releasing 6 gated workers | all 6 finished **20–27 ms** later |
+| D20 `tryAcquire()` shedding, 32 callers vs 4 permits | **88–90% shed** — countable rejections, not silent failure |
+| D20 non-fair vs fair `Semaphore`, 8 threads × 50,000 acquire/release | 49–73 ms vs 4,813–5,284 ms (**67–104×**) |
+| D21 4 exceptions against a 4-permit pool | pool driven to **0 available permits**, never recovers |
+| D21 `tryAcquire(200ms)` on an exhausted semaphore | returns **false at ~203 ms** instead of parking forever |
 | D22 pool core=2 max=10 queue=100, 60 tasks | **2 threads, 58 queued** — 8 permitted threads never created |
 | D22 same pool, queue=4 (only change) | **10 threads**, 46 rejected |
 | D22 `newFixedThreadPool(2)` | **1,000,002 tasks queued in 104 ms** — never rejects, fails as heap |
@@ -184,8 +204,8 @@ rather than review.
 
 | # | Topic | Reuses | Status |
 |---|---|---|---|
-| 6 | Shared structures — `ConcurrentHashMap` (compute/merge), `CopyOnWriteArrayList`, `ThreadLocal` and its pool-leak hazard | check-then-act (D8) in new clothing | 🔄 in progress |
-| 7 | Coordination — `CountDownLatch`, `CyclicBarrier`, `Semaphore`, `Phaser` as a 2×2, not four APIs | latch deadlocks foreshadowed in topic 4 | 🔄 in progress |
+| 6 | Shared structures — `ConcurrentHashMap` (compute/merge), `CopyOnWriteArrayList`, `ThreadLocal` and its pool-leak hazard | check-then-act (D8) in new clothing | ✅ |
+| 7 | Coordination — `CountDownLatch`, `CyclicBarrier`, `Semaphore`, `Phaser` as a 2×2, not four APIs | latch deadlocks foreshadowed in topic 4 | ✅ |
 | 8 | `ThreadPoolExecutor` internals — core → **queue** → max → reject | Ex7's queue + Ex8's pipeline become a pool | ✅ |
 | 9 | ForkJoin, parallel streams, **virtual threads**, structured concurrency | `ScopedValue` vs topic 6's `ThreadLocal` | ✅ |
 | 10 | **Capstone incident** — diagnose a planted deadlock + pool exhaustion + ThreadLocal leak + a spinner from thread dumps alone (`jstack`, `jcmd`, JFR) | everything | ✅ |

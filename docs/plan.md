@@ -82,13 +82,13 @@ becomes topic 10's incident.
 | 3 | Races, atomicity, CAS, ABA, LongAdder | D7–D9 | Ex1, Ex3 | 2hr | ✅ |
 | 4 | Locks, deadlock, ReadWriteLock, Condition | D10–D12 | Ex5, Ex6, Ex7 | 2.5hr | ✅ |
 
-### Block B — Moving work between threads
+### Block B — Moving work between threads ✅
 
 | # | Topic | Demos | Exercises | Time | Status |
 |---|------|-------|-----------|------|--------|
 | 5 | Hand-off: blocking queues, backpressure, draining shutdown | D13–D15 | Ex8 | 2hr | ✅ |
-| 6 | Shared structures: ConcurrentHashMap, CopyOnWrite, ThreadLocal | — | — | 2hr | ⬜ |
-| 7 | Coordination: latch · barrier · semaphore · phaser (as a 2×2) | — | — | 1.5hr | ⬜ |
+| 6 | Shared structures: ConcurrentHashMap, CopyOnWrite, ThreadLocal | D16–D18 | Ex9, Ex10 | 2hr | ✅ |
+| 7 | Coordination: latch · barrier · semaphore · phaser (as a 2×2) | D19–D21 | Ex11, Ex12 | 1.5hr | ✅ |
 
 ### Block C — Who runs the work
 
@@ -107,13 +107,15 @@ Topic 10 is a simulation, not a topic. You get a broken service and the tools,
 with no label saying which mechanism applies — which is the step interviews and
 production actually test, and the one a topic-by-topic curriculum never trains.
 
-**Built so far:** 25 runnable demos that visibly misbehave (a loop that never
+**Built so far:** 31 runnable demos that visibly misbehave (a loop that never
 exits, 92% memory-reordering anomalies, a self-inflicted deadlock the JVM
 detects, a `HashMap` that spins forever, a queue that eats 140 MB in 0.4s, a
-pool that ignores 8 of its 10 permitted threads, a virtual thread made 150×
-slower by one keyword, a service that answers 200 of 200 requests with the
-wrong customer's data) + 11 broken exercises with contract tests that fail
-until fixed. 32 reference tests all green.
+`Semaphore` pool that leaks a permit forever on every exception, a
+`CountDownLatch` reused across rounds that silently stops synchronizing
+anything, a pool that ignores 8 of its 10 permitted threads, a virtual thread
+made 150× slower by one keyword, a service that answers 200 of 200 requests
+with the wrong customer's data) + 15 broken exercises with contract tests that
+fail until fixed. 44 reference tests all green.
 
 Two results in this module are deliberately reported as **unreplicable**: the
 `ArrayBlockingQueue`-vs-`LinkedBlockingQueue` comparison held in only 5 of 7

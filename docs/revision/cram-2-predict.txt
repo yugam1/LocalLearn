@@ -50,6 +50,12 @@ Fast producer, slow consumer, unbounded queue, 1.5s. Which loses data?	Neither -
 1,000,000 hand-offs through ArrayBlockingQueue: faster at 1P/1C or 4P/4C?	4P/4C, 134ms vs 289ms - park/unpark dominates, not lock contention
 You shut a pipeline down by interrupting its workers. What did you just do?	Abandoned everything still queued - prompt, clean, and silently lossy
 Idle consumer pool, zero traffic, pods pinned at 100% CPU. One line is to blame. Which?	A while-loop around poll() - it is a busy-wait; block in take()/poll(timeout) instead
+16 threads run map.put(k, map.get(k)+1) on a ConcurrentHashMap, 32,000 times. Lost updates?	Yes, 0.7-13.3% - the map is atomic per call, get-then-put is still two calls, same bug as count++
+A servlet filter clears a ThreadLocal with ID.set(null) inside a finally. Anything leaked?	Yes - the map entry itself. set(null) fills the slot, it doesn't remove it; only remove() does
+A 1,000-element list, 8 threads, 10% writes. CopyOnWriteArrayList or synchronizedList - which wins?	Neither reliably - measured landed on both sides of 1.0x; COW's advantage decays away by ~10% writes
+Six workers run five rounds sharing one CountDownLatch(6), created once, reused each round. Round 3?	1 of 6 arrived - countDown()/await() at zero are no-ops, so there is no barrier from round 2 on
+Two threads each wait on the other's CountDownLatch. jcmd Thread.print - does it report a deadlock?	No - WAITING threads with owned-by: nobody. No owner, no edge, no cycle, nothing to report
+An error path calls semaphore.release() with no matching acquire(). Does it throw?	No - it mints a permit out of nothing; a 2-permit semaphore silently becomes a 4-permit one
 Pool core=2 max=10 queue=100, 60 tasks arrive at once. Threads running?	2 - 58 go to the queue; growth needs the queue FULL first
 You raise maxPoolSize from 10 to 50 and nothing changes. Why?	The queue never fills, so the growth step never runs - shrink the queue instead
 Discard policy reports great latency, CallerRuns reports 600ms. Which is failing?	Discard - it lost 1,990 of 2,000 tasks in under 1ms. Fast because it did nothing
