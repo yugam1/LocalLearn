@@ -9,7 +9,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * DEMO 17 — The bug you already know, in its third disguise.
@@ -85,6 +84,7 @@ public final class D17_AtomicMapUpdates {
     private static final int PER_THREAD = 2_000;
     private static final int DISTINCT_KEYS = 50;
     private static final long EXPECTED_TOTAL = (long) THREADS * PER_THREAD;
+    private static final int ELECTION_TRIALS = 200;
 
     public static void main(String[] args) throws Exception {
         whoRegisteredFirst();
@@ -107,16 +107,24 @@ public final class D17_AtomicMapUpdates {
     }
 
     // ── 1. Everyone thinks they were first ─────────────────────────────────
+    /**
+     * Reported the way D8 reports overselling, and for the same reason: a single
+     * trial of this proves nothing, because most of the time the race simply
+     * does not happen. What matters is <em>how often</em>, and the answer —
+     * "usually fine" — is the property that makes this bug ship.
+     */
     private static void whoRegisteredFirst() {
         Log.section("CHECK-THEN-ACT — \"am I the first to register this key?\"");
-        Log.log("32 threads race to claim ONE key. Exactly one must win.");
+        Log.log("32 threads race to claim ONE key, %d trials. Exactly one must win.", ELECTION_TRIALS);
 
-        for (int trial = 1; trial <= 5; trial++) {
+        int brokenBadTrials = 0;
+        int brokenWorst = 0;
+        int fixedBadTrials = 0;
+        for (int trial = 1; trial <= ELECTION_TRIALS; trial++) {
             ConcurrentHashMap<String, String> broken = new ConcurrentHashMap<>();
             AtomicInteger brokenWinners = new AtomicInteger();
             ConcurrentHashMap<String, String> fixed = new ConcurrentHashMap<>();
             AtomicInteger fixedWinners = new AtomicInteger();
-            CountDownLatch gate = new CountDownLatch(1);
 
             Stress.run(32, 1, i -> {
                 String me = Thread.currentThread().getName();
@@ -127,20 +135,33 @@ public final class D17_AtomicMapUpdates {
                     brokenWinners.incrementAndGet();
                 }
 
-                // FIXED: one call. The map does the check and the act while it
-                // holds the bin lock, and tells you who the incumbent was.
+                // FIXED: one call. The map performs the check and the act while
+                // it holds the bin lock, and returns the incumbent (or null if
+                // there wasn't one, which is how you know you won).
                 if (fixed.putIfAbsent("leader", me) == null) {
                     fixedWinners.incrementAndGet();
                 }
             });
 
-            Log.log("trial %d: containsKey-then-put elected %d leaders   |   putIfAbsent elected %d",
-                    trial, brokenWinners.get(), fixedWinners.get());
-            gate.countDown();
+            if (brokenWinners.get() > 1) {
+                brokenBadTrials++;
+                brokenWorst = Math.max(brokenWorst, brokenWinners.get());
+            }
+            if (fixedWinners.get() != 1) {
+                fixedBadTrials++;
+            }
         }
-        Log.log("Every one of those threads ran `map.put(...)` on a thread-safe map");
-        Log.log("and every one of them was told it was the first. In a real service");
-        Log.log("that is two schedulers both believing they own the nightly job.");
+
+        Log.log("containsKey-then-put: elected more than one leader in %d of %d trials (%.0f%%), worst %d leaders",
+                brokenBadTrials, ELECTION_TRIALS, 100.0 * brokenBadTrials / ELECTION_TRIALS, brokenWorst);
+        Log.log("putIfAbsent:          elected exactly one leader in %d of %d trials",
+                ELECTION_TRIALS - fixedBadTrials, ELECTION_TRIALS);
+        Log.log("Read the first line the way D8 taught you to: it is mostly fine.");
+        Log.log("Mostly fine is the property that gets a bug past code review, past");
+        Log.log("the test suite, and into the release. Every one of those threads");
+        Log.log("called put() on a thread-safe map and every one was told it was");
+        Log.log("first — in a real service, two schedulers both believing they own");
+        Log.log("the nightly job, and only one of them is right.");
     }
 
     // ── 2. get-then-put loses increments, exactly like D7 ───────────────────
@@ -257,24 +278,47 @@ public final class D17_AtomicMapUpdates {
     private static void recursiveUpdate() {
         Log.section("THE ONE HARD RULE FOR compute/merge/computeIfAbsent");
 
-        ConcurrentHashMap<String, String> map = new ConcurrentHashMap<>();
+        // Keys 0 and 16 land in the SAME bin of a default 16-slot table, which
+        // is what makes this reproducible. computeIfAbsent parks a reservation
+        // node in the empty bin before running the function; the nested call
+        // finds that reservation and refuses, because the only alternative is
+        // this thread waiting on a bin it is itself in the middle of writing.
+        ConcurrentHashMap<Integer, String> sameBin = new ConcurrentHashMap<>();
         try {
-            map.computeIfAbsent("a", k -> {
-                map.put("b", "written from inside the mapping function");
-                return "value-a";
+            sameBin.computeIfAbsent(0, k -> {
+                sameBin.computeIfAbsent(16, k2 -> "written from inside the mapping function");
+                return "value-0";
             });
-            Log.log("no exception — the recursive update slipped through (bin-dependent)");
+            Log.log("same bin  (keys 0 and 16): no exception — map now %s", sameBin);
         } catch (IllegalStateException e) {
-            Log.log("computeIfAbsent threw %s: \"%s\"", e.getClass().getSimpleName(), e.getMessage());
+            Log.log("same bin  (keys 0 and 16): %s: \"%s\"",
+                    e.getClass().getSimpleName(), e.getMessage());
         }
-        Log.log("The mapping function runs while the bin lock is HELD. Touching the");
-        Log.log("same map from inside it risks the thread blocking on a lock it is");
-        Log.log("already holding, so the JDK detects the case and throws instead.");
-        Log.log("Same reason the function must be quick: everything hashing to that");
-        Log.log("bin is waiting on it. Slow load? Cache a CompletableFuture, so the");
-        Log.log("map stores a placeholder instantly and the lock is released.");
-        AtomicLong ignored = new AtomicLong();   // keeps the import honest in every JDK
-        ignored.get();
+
+        // A different bin does NOT throw. That is the trap: the check is not a
+        // contract, it is the JDK catching the subset of cases it can see. Your
+        // code is broken either way; only one version tells you.
+        ConcurrentHashMap<Integer, String> otherBin = new ConcurrentHashMap<>();
+        try {
+            otherBin.computeIfAbsent(0, k -> {
+                otherBin.put(7, "different bin");
+                return "value-0";
+            });
+            Log.log("other bin (keys 0 and 7):  no exception — map now %s", otherBin);
+        } catch (IllegalStateException e) {
+            Log.log("other bin (keys 0 and 7):  %s: \"%s\"",
+                    e.getClass().getSimpleName(), e.getMessage());
+        }
+
+        Log.log("The mapping function runs while the bin lock is HELD, so touching");
+        Log.log("the same map from inside it can mean waiting on a bin you are");
+        Log.log("already writing. The JDK detects that case and throws rather than");
+        Log.log("hang — but only when the keys collide, so the absence of an");
+        Log.log("exception is not evidence that your mapping function is safe.");
+        Log.log("Same reason it must be quick: everything hashing to that bin is");
+        Log.log("waiting on it. Slow load? Cache a CompletableFuture, so the map");
+        Log.log("stores a placeholder instantly and the bin lock is released while");
+        Log.log("the work runs.");
     }
 
     private D17_AtomicMapUpdates() {

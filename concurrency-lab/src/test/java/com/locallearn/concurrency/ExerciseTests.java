@@ -1,6 +1,10 @@
 package com.locallearn.concurrency;
 
 import com.locallearn.concurrency.api.Contracts.Bank;
+import com.locallearn.concurrency.api.Contracts.BoundedResourcePool;
+import com.locallearn.concurrency.api.Contracts.EventCounts;
+import com.locallearn.concurrency.api.Contracts.RequestContext;
+import com.locallearn.concurrency.api.Contracts.RoundSync;
 import com.locallearn.concurrency.api.Contracts.BoundedQueue;
 import com.locallearn.concurrency.api.Contracts.ComputeOnceCache;
 import com.locallearn.concurrency.api.Contracts.Counter;
@@ -9,6 +13,10 @@ import com.locallearn.concurrency.api.Contracts.InterruptibleWorker;
 import com.locallearn.concurrency.api.Contracts.Pipeline;
 import com.locallearn.concurrency.api.Contracts.StopSignal;
 import com.locallearn.concurrency.contract.BankContract;
+import com.locallearn.concurrency.contract.BoundedResourcePoolContract;
+import com.locallearn.concurrency.contract.EventCountsContract;
+import com.locallearn.concurrency.contract.RequestContextContract;
+import com.locallearn.concurrency.contract.RoundSyncContract;
 import com.locallearn.concurrency.contract.BoundedQueueContract;
 import com.locallearn.concurrency.contract.ComputeOnceCacheContract;
 import com.locallearn.concurrency.contract.CounterContract;
@@ -21,6 +29,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 
 import java.util.function.Consumer;
+import java.util.function.IntConsumer;
 import java.util.function.Function;
 
 /**
@@ -101,6 +110,38 @@ class ExerciseTests {
         @Override protected Pipeline newPipeline(int capacity, int workers,
                                                  Consumer<String> processor) {
             return new Exercises.Ex8Pipeline(capacity, workers, processor);
+        }
+    }
+
+    @Nested
+    @DisplayName("Ex9 — atomic map updates")
+    class Ex9 extends EventCountsContract {
+        @Override protected EventCounts newCounts() {
+            return new Exercises.Ex9EventCounts();
+        }
+    }
+
+    @Nested
+    @DisplayName("Ex10 — thread-confined request context")
+    class Ex10 extends RequestContextContract {
+        @Override protected RequestContext newContext() {
+            return new Exercises.Ex10Context();
+        }
+    }
+
+    @Nested
+    @DisplayName("Ex11 — reusable round barrier")
+    class Ex11 extends RoundSyncContract {
+        @Override protected RoundSync newRoundSync(int workers, IntConsumer roundWork) {
+            return new Exercises.Ex11Rounds(workers, roundWork);
+        }
+    }
+
+    @Nested
+    @DisplayName("Ex12 — semaphore-bounded resource pool")
+    class Ex12 extends BoundedResourcePoolContract {
+        @Override protected BoundedResourcePool newPool(int limit) {
+            return new Exercises.Ex12Pool(limit);
         }
     }
 }

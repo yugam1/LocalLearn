@@ -454,4 +454,306 @@ public final class Exercises {
             return alive;
         }
     }
+
+    // ══════════════════════════════════════════════════════════ EXERCISE 9
+    /**
+     * <b>Make the compound updates atomic.</b> See
+     * {@code t06shared.D17_AtomicMapUpdates}.
+     *
+     * <p><b>Read the field declaration first.</b> The map is already a
+     * {@code ConcurrentHashMap}. Every single call below is atomic and
+     * thread-safe, and this class is still broken — which is the entire lesson
+     * of topic 6, and the reason the starting code is not a {@code HashMap}.
+     *
+     * <p>{@code record} is {@code get}-then-{@code put}: two atomic calls with a
+     * race-shaped hole between them. That is {@code count++} from D7 wearing a
+     * Map's clothes, and it loses increments at the same rate. {@code consume}
+     * is worse — it is {@code containsKey}-then-act, so two callers can both see
+     * a count of 1 and both claim the same single occurrence. You have now met
+     * this shape in D8 (overselling), Ex6 (the cache stampede) and D17.
+     *
+     * <p>The fix is not "use a thread-safe map" — you already have one. It is
+     * <b>express each whole read-modify-write as one call</b>, so the map holds
+     * the bin lock across the read and the write together:
+     * <ul>
+     *   <li>{@code merge(key, 1L, Long::sum)} for the increment;</li>
+     *   <li>{@code compute(key, (k, v) -> ...)} for the decrement — and note
+     *       that <b>returning null from compute removes the entry</b>, which is
+     *       exactly how you satisfy "a key consumed to zero must disappear"
+     *       atomically rather than with a second {@code remove} call that would
+     *       reopen the same gap.</li>
+     * </ul>
+     *
+     * <p>Careful with {@code consume}: it has to report whether it actually
+     * consumed something, and the mapping function cannot return that to you.
+     * Capture it from inside the function — an effectively-final one-element
+     * array or an {@code AtomicBoolean} — and read it after {@code compute}
+     * returns. The mapping function runs exactly once per successful call, under
+     * the bin lock, so what it records is accurate.
+     */
+    public static final class Ex9EventCounts
+            implements com.locallearn.concurrency.api.Contracts.EventCounts {
+
+        // Already thread-safe. Already not enough.
+        private final Map<String, Long> counts = new java.util.concurrent.ConcurrentHashMap<>();
+
+        @Override
+        public void record(String key) {
+            Long current = counts.get(key);                     // TODO broken: READ...
+            counts.put(key, current == null ? 1L : current + 1); // TODO broken: ...and WRITE, separately
+        }
+
+        @Override
+        public boolean consume(String key) {
+            Long current = counts.get(key);                     // TODO broken: CHECK...
+            if (current == null || current <= 0) {
+                return false;
+            }
+            if (current == 1) {
+                counts.remove(key);                             // TODO broken: ...and ACT, separately —
+            } else {                                            //     two callers can both get here
+                counts.put(key, current - 1);
+            }
+            return true;
+        }
+
+        @Override
+        public long count(String key) {
+            Long value = counts.get(key);
+            return value == null ? 0L : value;
+        }
+
+        @Override
+        public int distinctKeys() {
+            return counts.size();
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════ EXERCISE 10
+    /**
+     * <b>Confine the correlation id to its own thread, and clean it up.</b>
+     * See {@code t06shared.D18_CopyOrConfine}.
+     *
+     * <p>Three defects, each with its own test, and all three are things that
+     * have shipped in real filters:
+     * <ol>
+     *   <li><b>Not confined at all.</b> A {@code static String} is shared by
+     *       every thread in the JVM, so two concurrent requests overwrite each
+     *       other's id. Thread confinement is the fix, and {@link ThreadLocal}
+     *       is how you express it.</li>
+     *   <li><b>Cleanup is not in a {@code finally}.</b> When the body throws,
+     *       the unbind is skipped and the value stays attached to the thread.
+     *       On a pooled thread that means the next request — a different user —
+     *       inherits it. This is precisely why the MDC rule in
+     *       {@code ../01-foundations/07-logging-mdc-correlation-ids.md} is
+     *       {@code MDC.clear()} in a {@code finally}, non-negotiable.</li>
+     *   <li><b>Nesting is not restored.</b> Clearing on exit is wrong when a
+     *       scope was nested inside another: the outer request's id must come
+     *       back, not vanish. Save the previous value before setting, and put it
+     *       back afterwards.</li>
+     * </ol>
+     *
+     * <p>One more rule that no test here can see but every reviewer should:
+     * when you do clear, use {@code remove()}, never {@code set(null)}.
+     * {@code set(null)} leaves the entry in the thread's map holding a null —
+     * the slot is never reclaimed, and on a pool thread that lives forever, so
+     * does the entry. D18 proves the difference with an {@code initialValue}.
+     */
+    public static final class Ex10Context
+            implements com.locallearn.concurrency.api.Contracts.RequestContext {
+
+        // TODO broken: one field for the whole JVM. Every thread shares it.
+        private static String correlationId;
+
+        @Override
+        public void runWithCorrelationId(String id, Runnable body) {
+            correlationId = id;
+            body.run();
+            // TODO broken: not in a finally, so a throwing body skips it — and
+            // TODO broken: clears instead of restoring, so nesting loses the outer id.
+            correlationId = null;
+        }
+
+        @Override
+        public String currentCorrelationId() {
+            return correlationId;
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════ EXERCISE 11
+    /**
+     * <b>Make the rounds actually synchronise.</b> See
+     * {@code t07coordination.D19_LatchVersusBarrier}.
+     *
+     * <p>The starting code uses one {@link java.util.concurrent.CountDownLatch},
+     * created once in the constructor, as a per-round barrier. Round 1 works
+     * perfectly. From round 2 onwards the latch's count is already zero, so
+     * {@code countDown()} does nothing and {@code await()} returns immediately —
+     * there is no rendezvous left at all, and the workers run free while the
+     * code still looks synchronised. Nothing throws and nothing hangs; the
+     * tallies simply stop being 6.
+     *
+     * <p>A latch is <b>one-shot</b>. It counts down to zero and stays there
+     * forever, and there is no {@code reset()} by design. What you want is the
+     * other half of the 2×2 — a reusable rendezvous of a fixed set of parties —
+     * which is {@link java.util.concurrent.CyclicBarrier}.
+     *
+     * <p>Use the <b>barrier action</b> for the tally. It runs on the last thread
+     * to arrive, once per round, while every other party is still parked, which
+     * makes it the only instant in the round when nothing else is touching the
+     * shared state. Tallying anywhere else — even with a correct barrier — races
+     * with the workers starting the next round.
+     *
+     * <p>And do not "fix" this with {@code while (arrived.get() < workers) { }}.
+     * It passes the correctness tests and burns a core per waiting worker; the
+     * third test measures per-thread CPU time and rejects it, exactly as Ex7's
+     * and Ex8's CPU assertions did.
+     */
+    public static final class Ex11Rounds
+            implements com.locallearn.concurrency.api.Contracts.RoundSync {
+
+        private final int workers;
+        private final java.util.function.IntConsumer roundWork;
+        private final java.util.List<Integer> tallies =
+                java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+        private final java.util.concurrent.atomic.AtomicInteger arrived =
+                new java.util.concurrent.atomic.AtomicInteger();
+
+        // TODO broken: created ONCE. A latch cannot be reused — after round 1
+        // TODO broken: its count is zero, so there is no barrier at all.
+        private final java.util.concurrent.CountDownLatch roundDone;
+
+        public Ex11Rounds(int workers, java.util.function.IntConsumer roundWork) {
+            this.workers = workers;
+            this.roundWork = roundWork;
+            this.roundDone = new java.util.concurrent.CountDownLatch(workers);
+        }
+
+        @Override
+        public void runAll(int rounds) throws InterruptedException {
+            java.util.concurrent.CountDownLatch allFinished =
+                    new java.util.concurrent.CountDownLatch(workers);
+            for (int w = 0; w < workers; w++) {
+                final int id = w;
+                Thread worker = new Thread(() -> {
+                    try {
+                        for (int round = 0; round < rounds; round++) {
+                            roundWork.accept(id);
+                            arrived.incrementAndGet();
+                            roundDone.countDown();      // TODO broken: no-op once at zero
+                            roundDone.await();          // TODO broken: returns instantly once at zero
+                            if (id == 0) {
+                                tallies.add(arrived.getAndSet(0));
+                            }
+                        }
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    } finally {
+                        allFinished.countDown();        // in a finally: see D19
+                    }
+                }, "round-worker-" + id);
+                worker.setDaemon(true);
+                worker.start();
+            }
+            allFinished.await();
+        }
+
+        @Override
+        public java.util.List<Integer> tallies() {
+            return new java.util.ArrayList<>(tallies);
+        }
+
+        @Override
+        public int workers() {
+            return workers;
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════ EXERCISE 12
+    /**
+     * <b>Build a bounded resource pool that actually bounds anything.</b>
+     * See {@code t07coordination.D20_SemaphorePermits}.
+     *
+     * <p>Two defects, one per test, and both are real production bugs:
+     * <ol>
+     *   <li><b>{@code tryAcquire()} and then carrying on anyway.</b> The
+     *       non-blocking form returns false when the pool is full, and this code
+     *       ignores that and runs the task regardless — so the "limit" is
+     *       decorative. If you want the caller to wait, {@code acquire()} is the
+     *       verb; if you want to reject, you must actually reject. Running
+     *       unaccounted is the one option that is never right, because the
+     *       concurrency it permits is unbounded <em>and</em> invisible.</li>
+     *   <li><b>{@code release()} after the work instead of in a
+     *       {@code finally}.</b> Every task that throws permanently destroys one
+     *       slot. The pool does not fail at the first error — it shrinks, one
+     *       exception at a time, until the last slot goes and every caller waits
+     *       forever, with no deadlock report to explain it (D21).</li>
+     * </ol>
+     *
+     * <p>The shape you want, and it is worth memorising as a shape:
+     * <pre>{@code
+     * slots.acquire();
+     * try {
+     *     return task.call();
+     * } finally {
+     *     slots.release();
+     * }
+     * }</pre>
+     * Note that the in-flight counter needs the same discipline, for the same
+     * reason.
+     *
+     * <p>Once it passes, go back and ask the design question D20 ends on: at a
+     * real service boundary, is {@code acquire()} (wait, invisibly, forever) or
+     * {@code tryAcquire(timeout)} (wait a bounded time, then shed load
+     * deliberately and countably) the behaviour you want? It is topic 5's
+     * block/drop/grow decision at a different layer.
+     */
+    public static final class Ex12Pool
+            implements com.locallearn.concurrency.api.Contracts.BoundedResourcePool {
+
+        private final int limit;
+        private final java.util.concurrent.Semaphore slots;
+        private final java.util.concurrent.atomic.AtomicInteger inFlight =
+                new java.util.concurrent.atomic.AtomicInteger();
+        private final java.util.concurrent.atomic.AtomicInteger peak =
+                new java.util.concurrent.atomic.AtomicInteger();
+
+        public Ex12Pool(int limit) {
+            this.limit = limit;
+            this.slots = new java.util.concurrent.Semaphore(limit);
+        }
+
+        @Override
+        public <T> T execute(java.util.concurrent.Callable<T> task) throws Exception {
+            // TODO broken: tryAcquire does not wait — and the task then runs
+            // TODO broken: whether or not a slot was obtained, so nothing is bounded.
+            boolean acquired = slots.tryAcquire();
+
+            peak.accumulateAndGet(inFlight.incrementAndGet(), Math::max);
+            T result = task.call();
+            inFlight.decrementAndGet();
+
+            // TODO broken: not in a finally — a throwing task never gets here,
+            // TODO broken: and that slot is gone for the lifetime of the process.
+            if (acquired) {
+                slots.release();
+            }
+            return result;
+        }
+
+        @Override
+        public int peakConcurrency() {
+            return peak.get();
+        }
+
+        @Override
+        public int availableSlots() {
+            return slots.availablePermits();
+        }
+
+        /** The size the pool was built with — {@link #availableSlots()} must return to it. */
+        public int limit() {
+            return limit;
+        }
+    }
 }
