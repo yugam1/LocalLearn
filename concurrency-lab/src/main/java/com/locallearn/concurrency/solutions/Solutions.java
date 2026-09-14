@@ -485,4 +485,198 @@ public final class Solutions {
             return alive;
         }
     }
+
+    // ══════════════════════════════════════════════════════════ SOLUTION 15
+    /**
+     * The incident, repaired. Four defects, four different mechanisms, four
+     * different topics — and the point of the exercise is that nothing in the
+     * symptom told you which was which.
+     *
+     * <h2>1. The partial hang — a lock-ordering deadlock (topic 4)</h2>
+     * {@code transfer(0, 1)} took lock 0 then lock 1 while {@code transfer(1, 0)}
+     * took them in the opposite order: a circular wait, the last of Coffman's
+     * four conditions. The fix is a <b>total order</b> over the locks — ascending
+     * index here, but any consistent order works as long as every path uses the
+     * same one. A cycle would now require a thread holding a higher index to
+     * wait for a lower one, and no thread ever does. No retries, no timeouts,
+     * nothing to tune.
+     *
+     * <p>This is the only one of the four that {@code findDeadlockedThreads()}
+     * would have handed you, and even then only because both locks are AQS
+     * locks with owners. Note the threads showed {@code WAITING}, not
+     * {@code BLOCKED}.
+     *
+     * <h2>2. The total hang — pool exhaustion (topics 5 and 8)</h2>
+     * Every worker submitted its validation sub-task to <b>the pool it was
+     * running on</b> and then blocked on the resulting {@code Future}. With
+     * four workers and four such requests in flight, all four threads were
+     * waiting for tasks that could only be run by a thread that was already
+     * waiting. The queue was unbounded, so nothing was rejected and nothing
+     * threw; the service simply stopped, permanently, and no deadlock detector
+     * saw a thing, because a {@code Future} has no owner to form a cycle with.
+     *
+     * <p>The fix here is to stop splitting the work at all: validation is three
+     * instructions and is now called directly. The general rule it comes from is
+     * the one to remember — <b>never block a pool thread on work that can only
+     * be performed by the same pool.</b> When the sub-task genuinely must run
+     * elsewhere (it is slow, or it is I/O), give it its <em>own</em> pool, so
+     * the two can never starve each other.
+     *
+     * <h2>3. The wrong answers — a ThreadLocal left on a pooled thread (topic 6)</h2>
+     * The context was installed only when a request had a tenant and was never
+     * removed, so a worker went back into the pool still wearing the last
+     * identity it served, and the next task to land on that thread inherited it.
+     * The thread is reused; the {@code ThreadLocal} is per thread, not per task.
+     *
+     * <p>Two things are needed and neither alone is sufficient: set it
+     * <b>unconditionally</b>, so an absent tenant overwrites rather than
+     * inherits, and {@code remove()} it in a {@code finally}, so nothing
+     * survives the task even if the body throws. In a pool, {@code remove()} is
+     * not an optimisation to avoid a memory leak — it is a correctness
+     * requirement, and the failure it prevents is billing the wrong customer.
+     *
+     * <h2>4. The pinned core — a busy-wait (topic 5)</h2>
+     * {@code poll()} returns {@code null} immediately on an empty queue, so a
+     * loop around it spins. The fix is the verb: {@code poll(timeout, unit)}
+     * parks like {@code take()} but surfaces periodically, which is what a
+     * consumer loop that also has to notice a shutdown flag actually wants.
+     */
+    public static final class Sol15IncidentService
+            implements com.locallearn.concurrency.api.Contracts.IncidentService {
+
+        private static final ThreadLocal<String> CURRENT_TENANT = new ThreadLocal<>();
+
+        private final java.util.concurrent.ThreadPoolExecutor pool;
+        private final java.util.concurrent.BlockingQueue<String> auditQueue =
+                new java.util.concurrent.LinkedBlockingQueue<>();
+        private final Thread reaper;
+        private final long[] ledgers = new long[LEDGERS];
+        private final ReentrantLock[] locks = new ReentrantLock[LEDGERS];
+        private final AtomicLong completed = new AtomicLong();
+        private volatile boolean running = true;
+
+        public Sol15IncidentService(int workers) {
+            AtomicInteger seq = new AtomicInteger();
+            this.pool = new java.util.concurrent.ThreadPoolExecutor(
+                    workers, workers, 0L, java.util.concurrent.TimeUnit.MILLISECONDS,
+                    new java.util.concurrent.LinkedBlockingQueue<>(),
+                    runnable -> {
+                        Thread thread = new Thread(runnable,
+                                THREAD_PREFIX + "worker-" + seq.getAndIncrement());
+                        thread.setDaemon(true);
+                        return thread;
+                    });
+            for (int i = 0; i < LEDGERS; i++) {
+                ledgers[i] = INITIAL_BALANCE;
+                locks[i] = new ReentrantLock();
+            }
+            this.reaper = new Thread(this::reap, THREAD_PREFIX + "reaper");
+            this.reaper.setDaemon(true);
+            this.reaper.start();
+        }
+
+        @Override
+        public String handle(String tenant, String request) throws Exception {
+            java.util.concurrent.Future<String> outer = pool.submit(() -> {
+                // FIX 3a: set unconditionally. A request with no tenant must
+                // OVERWRITE whatever this thread was carrying, not inherit it.
+                CURRENT_TENANT.set(tenant == null ? ANONYMOUS : tenant);
+                try {
+                    // FIX 2: the validation runs here, on this thread. Nothing
+                    // is submitted to the pool we are currently occupying, so
+                    // no worker can ever wait for a task only it could run.
+                    validate(request);
+
+                    String effective = CURRENT_TENANT.get();
+                    auditQueue.add(effective + "/" + request);
+                    completed.incrementAndGet();
+                    return "tenant=" + effective + "|req=" + request;
+                } finally {
+                    // FIX 3b: in a finally, so the context cannot survive this
+                    // task even if the body throws. The thread is about to be
+                    // handed to a stranger.
+                    CURRENT_TENANT.remove();
+                }
+            });
+            return outer.get();
+        }
+
+        private String validate(String request) {
+            return request.isEmpty() ? "rejected" : "accepted";
+        }
+
+        @Override
+        public void transfer(int fromLedger, int toLedger, long amount) {
+            if (fromLedger == toLedger) {
+                return;
+            }
+            // FIX 1: a total order over the locks, so a circular wait cannot
+            // form. Any consistent order works; every path must use the same one.
+            int first = Math.min(fromLedger, toLedger);
+            int second = Math.max(fromLedger, toLedger);
+
+            locks[first].lock();
+            try {
+                locks[second].lock();
+                try {
+                    ledgers[fromLedger] -= amount;
+                    ledgers[toLedger] += amount;
+                } finally {
+                    locks[second].unlock();
+                }
+            } finally {
+                locks[first].unlock();
+            }
+        }
+
+        private void reap() {
+            while (running) {
+                try {
+                    // FIX 4: poll(timeout) parks instead of spinning, but still
+                    // surfaces regularly so the running flag gets a look-in.
+                    // take() would park too, and would never notice the flag.
+                    String entry = auditQueue.poll(100, java.util.concurrent.TimeUnit.MILLISECONDS);
+                    if (entry != null) {
+                        entry.length();
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();  // restore, then leave
+                    return;
+                }
+            }
+        }
+
+        @Override
+        public long ledgerTotal() {
+            // Not an atomic snapshot — it takes each lock in turn, so a transfer
+            // can land between two reads. Exact when quiescent, which is when
+            // the test asks.
+            long total = 0;
+            for (int i = 0; i < LEDGERS; i++) {
+                locks[i].lock();
+                try {
+                    total += ledgers[i];
+                } finally {
+                    locks[i].unlock();
+                }
+            }
+            return total;
+        }
+
+        @Override
+        public long completed() {
+            return completed.get();
+        }
+
+        @Override
+        public void shutdown() throws InterruptedException {
+            running = false;
+            reaper.interrupt();
+            pool.shutdown();
+            if (!pool.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                pool.shutdownNow();
+            }
+            reaper.join(java.util.concurrent.TimeUnit.SECONDS.toMillis(5));
+        }
+    }
 }

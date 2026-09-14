@@ -4,6 +4,7 @@ import com.locallearn.concurrency.api.Contracts.Bank;
 import com.locallearn.concurrency.api.Contracts.BoundedQueue;
 import com.locallearn.concurrency.api.Contracts.ComputeOnceCache;
 import com.locallearn.concurrency.api.Contracts.Counter;
+import com.locallearn.concurrency.api.Contracts.IncidentService;
 import com.locallearn.concurrency.api.Contracts.Inventory;
 import com.locallearn.concurrency.api.Contracts.InterruptibleWorker;
 import com.locallearn.concurrency.api.Contracts.Pipeline;
@@ -12,6 +13,7 @@ import com.locallearn.concurrency.contract.BankContract;
 import com.locallearn.concurrency.contract.BoundedQueueContract;
 import com.locallearn.concurrency.contract.ComputeOnceCacheContract;
 import com.locallearn.concurrency.contract.CounterContract;
+import com.locallearn.concurrency.contract.IncidentServiceContract;
 import com.locallearn.concurrency.contract.InterruptibleWorkerContract;
 import com.locallearn.concurrency.contract.InventoryContract;
 import com.locallearn.concurrency.contract.PipelineContract;
@@ -100,6 +102,14 @@ class SolutionTests {
         @Override protected Pipeline newPipeline(int capacity, int workers,
                                                  Consumer<String> processor) {
             return new Solutions.Sol8Pipeline(capacity, workers, processor);
+        }
+    }
+
+    @Nested
+    @DisplayName("Sol15 — the diagnostic incident")
+    class Sol15 extends IncidentServiceContract {
+        @Override protected IncidentService newService(int workers) {
+            return new Solutions.Sol15IncidentService(workers);
         }
     }
 }
