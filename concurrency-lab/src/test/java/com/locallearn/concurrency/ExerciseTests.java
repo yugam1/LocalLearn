@@ -4,6 +4,7 @@ import com.locallearn.concurrency.api.Contracts.Bank;
 import com.locallearn.concurrency.api.Contracts.BoundedQueue;
 import com.locallearn.concurrency.api.Contracts.ComputeOnceCache;
 import com.locallearn.concurrency.api.Contracts.Counter;
+import com.locallearn.concurrency.api.Contracts.IncidentService;
 import com.locallearn.concurrency.api.Contracts.Inventory;
 import com.locallearn.concurrency.api.Contracts.InterruptibleWorker;
 import com.locallearn.concurrency.api.Contracts.MiniPool;
@@ -14,6 +15,7 @@ import com.locallearn.concurrency.contract.BankContract;
 import com.locallearn.concurrency.contract.BoundedQueueContract;
 import com.locallearn.concurrency.contract.ComputeOnceCacheContract;
 import com.locallearn.concurrency.contract.CounterContract;
+import com.locallearn.concurrency.contract.IncidentServiceContract;
 import com.locallearn.concurrency.contract.InterruptibleWorkerContract;
 import com.locallearn.concurrency.contract.InventoryContract;
 import com.locallearn.concurrency.contract.MiniPoolContract;
@@ -121,6 +123,14 @@ class ExerciseTests {
     class Ex14 extends WorkloadRunnerContract {
         @Override protected WorkloadRunner newRunner() {
             return new Exercises.Ex14Runner();
+        }
+    }
+
+    @Nested
+    @DisplayName("Ex15 — the diagnostic incident")
+    class Ex15 extends IncidentServiceContract {
+        @Override protected IncidentService newService(int workers) {
+            return new Exercises.Ex15IncidentService(workers);
         }
     }
 }

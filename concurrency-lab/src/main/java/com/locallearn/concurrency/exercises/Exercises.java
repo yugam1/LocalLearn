@@ -687,4 +687,176 @@ public final class Exercises {
             executor.shutdownNow();
         }
     }
+
+
+    // ══════════════════════════════════════════════════════════ EXERCISE 15
+    /**
+     * <b>The incident.</b> See {@code t10diagnostics.D30_TheIncident} and
+     * {@code t10diagnostics.D31_DiagnosingTheIncident}.
+     *
+     * <p>This is the capstone, and it is deliberately unlike every other
+     * exercise on this page. The others name their mechanism in the heading, so
+     * you always know which chapter the fix comes from. Production never does
+     * that. Here you get a service, four failing tests, and four
+     * <em>symptoms</em> — and which of topics 1 to 9 applies to each is the
+     * thing you are being examined on.
+     *
+     * <p>The service below is about seventy lines and looks entirely reasonable.
+     * Four lines are wrong:
+     *
+     * <ol>
+     *   <li><b>Two requests hang; the rest of the service keeps working.</b> The
+     *       JVM will tell you what this one is if you ask it the right question.
+     *       Both stuck threads report {@code WAITING}, which is worth
+     *       remembering before you go grepping for {@code BLOCKED}.</li>
+     *   <li><b>Under concurrent load the service stops completely and stays
+     *       stopped</b> — and nothing reports a deadlock, because there is no
+     *       cycle of lock <em>ownership</em> anywhere. Look at where the worker
+     *       threads are parked and at what the pool's own queue is doing. Ask
+     *       yourself what those threads are waiting <em>for</em>, and who was
+     *       supposed to do it.</li>
+     *   <li><b>Nothing hangs and some answers are wrong.</b> Requests that carry
+     *       no tenant come back attributed to somebody else's tenant. No thread
+     *       dump, deadlock report, or CPU measurement will ever show you this;
+     *       only comparing what you sent with what came back. Ask what a pooled
+     *       thread still carries after it finishes a task.</li>
+     *   <li><b>A core is pinned while the service is idle.</b> The thread doing
+     *       it is {@code RUNNABLE}, which is exactly what a thread doing useful
+     *       work looks like, so the state word cannot help you. The verb you
+     *       chose can.</li>
+     * </ol>
+     *
+     * <p>Run {@code D30_TheIncident} to watch all four, then
+     * {@code D31_DiagnosingTheIncident} only once you have made your own
+     * diagnosis. Each of the four defects came from a different topic; if you
+     * find yourself fixing two of them the same way, one of the diagnoses is
+     * wrong.
+     */
+    public static final class Ex15IncidentService
+            implements com.locallearn.concurrency.api.Contracts.IncidentService {
+
+        /**
+         * The per-request context. This is {@code SecurityContextHolder}, it is
+         * SLF4J's {@code MDC}, and it is in every service you will ever work on:
+         * set once at the entry point so that code three layers down does not
+         * need a tenant parameter it does not care about.
+         */
+        private static final ThreadLocal<String> CURRENT_TENANT = new ThreadLocal<>();
+
+        private final java.util.concurrent.ThreadPoolExecutor pool;
+        private final java.util.concurrent.BlockingQueue<String> auditQueue =
+                new java.util.concurrent.LinkedBlockingQueue<>();
+        private final Thread reaper;
+        private final long[] ledgers = new long[LEDGERS];
+        private final java.util.concurrent.locks.ReentrantLock[] locks =
+                new java.util.concurrent.locks.ReentrantLock[LEDGERS];
+        private final java.util.concurrent.atomic.AtomicLong completed =
+                new java.util.concurrent.atomic.AtomicLong();
+        private volatile boolean running = true;
+
+        public Ex15IncidentService(int workers) {
+            java.util.concurrent.atomic.AtomicInteger seq =
+                    new java.util.concurrent.atomic.AtomicInteger();
+            this.pool = new java.util.concurrent.ThreadPoolExecutor(
+                    workers, workers, 0L, java.util.concurrent.TimeUnit.MILLISECONDS,
+                    new java.util.concurrent.LinkedBlockingQueue<>(),
+                    runnable -> {
+                        Thread thread = new Thread(runnable,
+                                THREAD_PREFIX + "worker-" + seq.getAndIncrement());
+                        thread.setDaemon(true);     // a wedged pool must not outlive the test JVM
+                        return thread;
+                    });
+            for (int i = 0; i < LEDGERS; i++) {
+                ledgers[i] = INITIAL_BALANCE;
+                locks[i] = new java.util.concurrent.locks.ReentrantLock();
+            }
+            this.reaper = new Thread(this::reap, THREAD_PREFIX + "reaper");
+            this.reaper.setDaemon(true);
+            this.reaper.start();
+        }
+
+        @Override
+        public String handle(String tenant, String request) throws Exception {
+            java.util.concurrent.Future<String> outer = pool.submit(() -> {
+                if (tenant != null) {
+                    CURRENT_TENANT.set(tenant);                 // TODO symptom 3
+                }
+
+                // Validation is farmed out so it can run "in parallel", and the
+                // request waits for the verdict before answering.
+                java.util.concurrent.Future<String> validation =
+                        pool.submit(() -> validate(request));   // TODO symptom 2
+                validation.get();
+
+                String effective = CURRENT_TENANT.get();
+                if (effective == null) {
+                    effective = ANONYMOUS;
+                }
+                auditQueue.add(effective + "/" + request);
+                completed.incrementAndGet();
+                return "tenant=" + effective + "|req=" + request;
+            });
+            return outer.get();
+        }
+
+        private String validate(String request) {
+            return request.isEmpty() ? "rejected" : "accepted";
+        }
+
+        @Override
+        public void transfer(int fromLedger, int toLedger, long amount) {
+            if (fromLedger == toLedger) {
+                return;
+            }
+            locks[fromLedger].lock();                           // TODO symptom 1
+            try {
+                locks[toLedger].lock();
+                try {
+                    ledgers[fromLedger] -= amount;
+                    ledgers[toLedger] += amount;
+                } finally {
+                    locks[toLedger].unlock();
+                }
+            } finally {
+                locks[fromLedger].unlock();
+            }
+        }
+
+        /** Drains the audit queue in the background. */
+        private void reap() {
+            while (running) {
+                String entry = auditQueue.poll();               // TODO symptom 4
+                if (entry != null) {
+                    // pretend to write it somewhere
+                    entry.length();
+                }
+            }
+        }
+
+        @Override
+        public long ledgerTotal() {
+            long total = 0;
+            for (int i = 0; i < LEDGERS; i++) {
+                locks[i].lock();
+                try {
+                    total += ledgers[i];
+                } finally {
+                    locks[i].unlock();
+                }
+            }
+            return total;
+        }
+
+        @Override
+        public long completed() {
+            return completed.get();
+        }
+
+        @Override
+        public void shutdown() {
+            running = false;
+            reaper.interrupt();
+            pool.shutdownNow();
+        }
+    }
 }

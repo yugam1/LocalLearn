@@ -395,6 +395,49 @@ ordering rule), D28 (what structured concurrency is for).*
 
 ---
 
+## 02.10 · Diagnostics & The Capstone Incident
+*Full doc: [`../02-concurrency/10-diagnostics-incident.md`](../02-concurrency/10-diagnostics-incident.md)*
+
+**Mental model:** Every other page in this curriculum announces its mechanism in
+the title, so you always know which chapter the fix comes from. Production never
+does that. It hands you a **symptom** — "it's hung", "a core is pinned", "the
+numbers are wrong" — and the entire skill is getting from there to a mechanism.
+That skill is not a fifth thing after the four you already know; it is the
+ability to look at *where a thread stopped* and recognise which of topics 1–9
+puts a thread there.
+
+The instruments are few, they are all built into the JDK, and each has a blind
+spot you must memorise, because the blind spots are where the expensive
+incidents live.
+
+```
+                    finds it?   findDeadlockedThreads()  findMonitorDeadlocked()
+synchronized cycle      yes              2 threads              2 threads
+ReentrantLock cycle     yes              4 threads              2 threads   <- diverges
+Semaphore permit cycle  NO               4 threads              2 threads   <- unchanged
+                                         ^ two threads parked forever, and the
+                                           count did not move. Measured in D29.
+```
+
+**The decision rule:** **`findDeadlockedThreads()` returning `null` narrows the
+cause; it never clears it.** It means "not a cycle of lock *ownership*", which
+rules out one family and leaves three — exhausted pool, uncounted latch, unfed
+queue — each of which is diagnosed from thread *stacks* and your own gauges
+instead.
+
+**Five rules you must never get wrong:**
+1. `RUNNABLE` is a liar in both directions: it includes threads blocked in a native socket read, and it is also what a thread pinning a whole core looks like. Read the frames and the `cpu=` field, never the state word.
+2. `BLOCKED` means an intrinsic `synchronized` monitor and nothing else. A `ReentrantLock` deadlock reports `WAITING`. Grep a dump for `BLOCKED`, find none, and you have ruled out nothing.
+3. Automatic detection follows lock **ownership**. A `Semaphore` permit, a `CountDownLatch`, a `Future`, and an empty queue have no owner, so a cycle built from them hangs silently and forever.
+4. Never block a pool thread on work that can only be performed by that same pool. With an unbounded queue nothing is rejected and nothing throws — the service just stops, permanently, and reports nothing.
+5. A thread dump cannot see wrong data. A `ThreadLocal` left on a pooled thread produces a perfectly healthy JVM that answers for the wrong customer, and the only instrument that finds it is an assertion you wrote in advance.
+
+*Run first: D29 (the instruments, calibrated against threads whose state you
+chose), then D30 (four symptoms, no labels — diagnose them yourself), and only
+then D31 (the answer key).*
+
+---
+
 ## 03.1 · Thread Pools & @Async
 *Full doc: [`../03-async-and-scheduling/01-thread-pools-completablefuture.md`](../03-async-and-scheduling/01-thread-pools-completablefuture.md)*
 

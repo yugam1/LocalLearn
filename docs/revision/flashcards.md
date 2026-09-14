@@ -253,6 +253,33 @@ Java 21 status	StructuredTaskScope + ScopedValue are PREVIEW — need --enable-p
 ScopedValue vs ThreadLocal	Immutable + block-scoped vs mutable map per thread. All differences follow
 ```
 
+## 02.10 · Diagnostics & The Incident
+
+```
+Thread dump, the two commands	jcmd <pid> Thread.print -l  ·  jstack <pid>. Take TWO, 30s apart
+The frame you want in a dump	NEVER the top one — skip Unsafe.park/LockSupport, find the first frame in YOUR package
+Dump header hidden gem	cpu= and elapsed= per thread. cpu≈elapsed = your spinner, no profiler needed
+findDeadlockedThreads() null means	"not a lock-OWNERSHIP cycle" — NOT "no hang". Narrows, never clears
+The two detectors differ by	findMonitorDeadlocked = monitors only; findDeadlocked = monitors + AQS. Divergence names the lock type
+Measured detector divergence	sync cycle 2/2 · +ReentrantLock cycle 4/2 · +Semaphore cycle 4/2 (unchanged — invisible)
+Invisible to every deadlock tool	Semaphore permits · CountDownLatch · Future.get · empty queue — no owner, no cycle
+RUNNABLE lies twice	Includes native socket reads (idle) AND a thread pinning a core. Read frames + cpu=
+BLOCKED means only	Intrinsic synchronized monitor. ReentrantLock deadlock says WAITING
+Angle brackets name the mechanism	FutureTask=pool on itself · CountDownLatch$Sync=uncounted latch · ConditionObject=queue · Semaphore$NonfairSync=permits
+Pool blocked on its own pool	Every worker WAITING in FutureTask.awaitDone; active==max, queued>0, both FROZEN over 2 samples
+Why pool exhaustion is silent	Unbounded queue ⇒ nothing rejected, nothing thrown; no lock owner ⇒ no detector. It just stops
+The pool rule	Never block a pool thread on work only that same pool can do. Needs elsewhere? Give it its OWN pool
+ThreadLocal on a pooled thread	Thread outlives the task ⇒ next task inherits the last tenant. Measured 200/200 wrong
+ThreadLocal fix needs BOTH	set() unconditionally (absent overwrites) AND remove() in a finally. Correctness, not hygiene
+Wrong data vs hang	No dump/detector/profiler sees wrong data. Only comparing input to output. Runs for weeks unnoticed
+100% CPU + flat progress counter	Working hard at nothing. EITHER number alone is ambiguous — you need both
+Busy-wait vs livelock	One thread in a poll() loop  vs  SEVERAL in a tryLock retry with no jitter (dump looks healthy)
+Thread leak, the three counters	live=is there a leak · totalStarted=still happening? · peak=compare after the fix
+JFR ExecutionSample is a CPU sampler	Nails a spinner (1652/1652 samples on 2 reapers). Near-USELESS for a hang — nothing is running
+Empty JFR profile during an outage	A positive result: nothing is executing ⇒ threads are stopped ⇒ take a dump
+Name your threads	A ThreadFactory is 4 lines. "pool-3-thread-7" costs you 20 minutes you do not have
+```
+
 ## 03.1 · Thread Pools & @Async
 
 ```
