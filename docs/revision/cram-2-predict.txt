@@ -56,3 +56,8 @@ Discard policy reports great latency, CallerRuns reports 600ms. Which is failing
 You write fork() then join() on each half. Speedup?	NONE - measured 0.5-0.7x, slower than the plain loop it replaced
 A parallel stream blocks on IO; an unrelated endpoint slows 8x. Why?	Both share ForkJoinPool.commonPool - one JVM-wide pool, no bulkhead
 10,000 blocking calls move to virtual threads but throughput barely moves. Cause?	synchronized pins the carrier - measured 105-156x penalty at ZERO contention
+15 threads stuck, JVM reports 1 deadlock covering 2. The other 13?	Parked on things with no owner - detectors follow lock ownership only
+Every pool worker is WAITING in FutureTask.awaitDone. Diagnosis?	Tasks submitted to their own pool; unbounded queue means nothing is ever rejected
+Service returns another customer's data, no errors, dashboards green. Cause?	A ThreadLocal never removed on a pooled thread - measured 200/200 wrong
+100% CPU on a pod. Busy or broken?	Ambiguous alone - pair CPU with a progress counter; flat progress means burning a core
+You grep a thread dump for BLOCKED and find none. Ruled out?	Nothing - BLOCKED means intrinsic monitors only; a ReentrantLock deadlock says WAITING

@@ -38,3 +38,8 @@ Total pool capacity before rejection?	maxPoolSize + queueCapacity
 Which rejection policy IS backpressure?	CallerRunsPolicy - the submitter runs it, so its arrival rate drops to zero
 Flag to find virtual-thread pinning?	-Djdk.tracePinnedThreads=full
 Rule that makes pinning impossible?	Never hold a monitor across a blocking call
+Two commands for a thread dump?	jcmd <pid> Thread.print -l and jstack <pid> - take TWO, 30s apart
+The pool rule that prevents silent exhaustion?	Never block a pool thread on work only that same pool can do - give it its own pool
+Cheapest diagnostic investment you can make?	Name your threads - a ThreadFactory is 4 lines; pool-3-thread-7 costs you 20 minutes
+Busy-wait vs livelock in a dump?	One thread in a poll() loop vs SEVERAL retrying tryLock with no jitter
+Three counters that prove a thread leak?	live (is there one), totalStarted (still happening) and peak (compare after the fix)

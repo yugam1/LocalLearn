@@ -74,9 +74,16 @@ predict what it will print, *then* read. Revision: Core Card + Gym only (~6 min)
 | 5 | [Hand-off: blocking queues & backpressure](05-handoff-blocking-queues.md) | D13–D15 | Ex8 | A queue doesn't equalise speeds — it picks **block / drop / grow** |
 | 8 | [ThreadPoolExecutor internals](08-threadpool-internals.md) | D22–D24 | Ex13 | The **queue is tried before the pool grows** — that one inversion explains everything |
 | 9 | [ForkJoin, parallel streams & virtual threads](09-forkjoin-parallel-virtual-threads.md) | D25–D28 | Ex14 | Ask **"what kind of work is this?"** before choosing anything |
+| 10 | [Diagnostics & the capstone incident](10-diagnostics-incident.md) | D29–D31 | Ex15 | Every instrument has a **blind spot**, and that's where the expensive incidents live |
 
 *(Topics 6 and 7 — shared structures and coordination — are in progress and slot
 in between 5 and 8.)*
+
+**Topic 10 is the final, and it is a simulation rather than a topic.** Every
+other page names its mechanism in the title, so you always know which chapter
+the fix comes from. Production hands you a symptom instead. D30 gives you a
+broken service with four planted defects and no labels; D31 is the answer key.
+Do not open it early.
 
 ---
 
@@ -96,6 +103,7 @@ Each one starts broken, and each is a bug you watched happen in a demo.
 | 8 | `Ex8Pipeline` | unbounded backlog · `poll()` spin · stop-flag shutdown drops the queue | D13–D15 |
 | 13 | `Ex13Pool` | submission rule inverted — grows to max *before* trying the queue | D22, D24 |
 | 14 | `Ex14Runner` | one executor strategy applied to both CPU-bound and IO-bound work | D25–D27 |
+| 15 | `Ex15IncidentService` | **four** planted defects, one each from topics 4, 5+8, 6 and 5 — and you are not told which | D29–D31 |
 
 **The tests are the point.** Each one runs 8–32 threads behind a start gate and
 repeats the whole trial 20–200 times, because a single trial of broken code has
@@ -150,6 +158,11 @@ Real numbers from the demos, so you know what to expect:
 | D26 blocking in the common pool | unrelated CPU stream **7.0–9.8× slower**, JVM-wide |
 | D27 10,000 tasks × 100ms blocking | 12-thread pool **115/sec** vs virtual threads **63,700/sec** (~550×) |
 | D27 virtual thread pinned by `synchronized` | **105–156× slower** than `ReentrantLock` (9 of 11 runs) |
+| D29 deadlock detectors vs a `Semaphore` permit cycle | **neither detector sees it** — 2 threads parked forever, count unchanged |
+| D30 pool blocked on its own pool | 0 of 8 requests completed, **no deadlock reported**, nothing thrown |
+| D30 `ThreadLocal` left on pooled threads | **200 of 200** requests answered with another tenant's identity |
+| D30 real dump of the wedged JVM | 30 threads, **15 permanently stuck**, JVM reported a deadlock covering **2** |
+| D31 JFR during the outage | 1,652 of 1,652 CPU samples on the 2 spinners; **1** `JavaMonitorEnter` for 15 stuck threads |
 
 Run them yourself; the numbers move but the conclusions don't.
 
@@ -175,7 +188,7 @@ rather than review.
 | 7 | Coordination — `CountDownLatch`, `CyclicBarrier`, `Semaphore`, `Phaser` as a 2×2, not four APIs | latch deadlocks foreshadowed in topic 4 | 🔄 in progress |
 | 8 | `ThreadPoolExecutor` internals — core → **queue** → max → reject | Ex7's queue + Ex8's pipeline become a pool | ✅ |
 | 9 | ForkJoin, parallel streams, **virtual threads**, structured concurrency | `ScopedValue` vs topic 6's `ThreadLocal` | ✅ |
-| 10 | **Capstone incident** — diagnose a planted deadlock + pool exhaustion + ThreadLocal leak from thread dumps alone (`jstack`, `jcmd`, JFR) | everything | 🔄 in progress |
+| 10 | **Capstone incident** — diagnose a planted deadlock + pool exhaustion + ThreadLocal leak + a spinner from thread dumps alone (`jstack`, `jcmd`, JFR) | everything | ✅ |
 
 Topic 10 is a simulation rather than a topic: you get a broken service and the
 tools, and must work out *which* mechanism applies with no topic label to tell

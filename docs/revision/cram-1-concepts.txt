@@ -111,3 +111,13 @@ What makes a virtual thread cheap?	Blocking, not computing - a blocked one holds
 What pins a virtual thread on Java 21?	synchronized - it holds the carrier's monitor so the thread cannot unmount
 Which lock does NOT pin a virtual thread?	ReentrantLock
 Is newVirtualThreadPerTaskExecutor a pool?	No - a factory. Never pool virtual threads
+What does findDeadlockedThreads() returning null actually mean?	Not a lock-OWNERSHIP cycle - it narrows the cause, it never clears it
+Which hangs are invisible to every deadlock detector?	Semaphore permits, CountDownLatch, Future.get, an empty queue - no owner, no cycle
+How do the two deadlock detectors differ?	findMonitorDeadlocked sees monitors only; findDeadlocked adds AQS locks
+Which dump field finds a spinner without a profiler?	The header's cpu= vs elapsed= - cpu approximately equals elapsed means spinning
+Which frame in a dump stack do you actually want?	Not the top - skip Unsafe.park/LockSupport, find the first frame in YOUR package
+What does FutureTask.awaitDone in every worker mean?	The pool is blocked on its own pool - it will never resume
+Can a thread dump detect a ThreadLocal leak?	No - nothing sees wrong data; only comparing input to output finds it
+What does ThreadLocal cleanup require?	BOTH set() unconditionally and remove() in a finally - correctness, not hygiene
+What is JFR's ExecutionSample good and bad at?	Nails a CPU spinner; near-useless for a hang, since nothing is running
+An empty JFR profile during an outage tells you?	A positive result - nothing is executing, so take a thread dump

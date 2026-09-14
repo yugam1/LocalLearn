@@ -1,12 +1,12 @@
 # 🎤 Mock Interview — Interleaved Round
 
-> **How to use:** 33 questions, deliberately shuffled across every phase —
+> **How to use:** 37 questions, deliberately shuffled across every phase —
 > interleaving is the point (blocked practice feels better; mixed practice
 > retains better). Answer OUT LOUD in full sentences before opening anything.
 > Score yourself: ✅ fluent · 🟡 got there slowly · ❌ missed. Anything 🟡/❌ →
 > that doc's Retrieval Gym goes back on your schedule.
 >
-> Rounds: do 1–17 in one sitting, 18–33 in another. Re-shuffle by starting from
+> Rounds: do 1–19 in one sitting, 20–37 in another. Re-shuffle by starting from
 > a random number.
 
 ---
@@ -79,12 +79,20 @@
 
 **33.** You migrate 10,000 blocking calls from a 12-thread pool to virtual threads and throughput barely moves, though the benchmark promised ~550×. The code uses `synchronized` around each call. Explain what is happening, how you would confirm it in one JVM flag, and the fix. *(→ 02-concurrency/09, 02-concurrency/04)*
 
+**34.** A service is wedged. `jcmd Thread.print` shows 15 threads permanently stuck, and the JVM reports exactly **one** deadlock covering **two** of them. What are the other 13 doing, and why does the JVM's own detector not see them? *(→ 02-concurrency/10, 02-concurrency/04)*
+
+**35.** Every worker in your pool is `WAITING` inside `FutureTask.awaitDone`, the queue has items, and nothing has thrown or been rejected. Name the bug, explain why it is completely silent, and give the rule that prevents it. *(→ 02-concurrency/10, 02-concurrency/08)*
+
+**36.** For two weeks your service has occasionally answered requests with a *different* customer's data. No errors, no hang, healthy dashboards. Where do you look, and why would a thread dump, a deadlock detector and a profiler all have shown you nothing? *(→ 02-concurrency/10, 02-concurrency/06)*
+
+**37.** A pod sits at 100% CPU. Your colleague says "it's busy, scale it up." How do you establish in two numbers whether it is doing work or burning a core at nothing — and what distinguishes a busy-wait from a livelock? *(→ 02-concurrency/10, 02-concurrency/04)*
+
 ---
 
 ## Scoring
 
 | ✅ count | Verdict |
 |---|---|
-| 29–33 | Interview-ready on covered material — maintain with R4 passes only |
-| 22–28 | Solid — drill the 🟡/❌ docs' gyms this week |
-| < 22 | Reset R1/R2 passes on every ❌ topic before booking anything |
+| 33–37 | Interview-ready on covered material — maintain with R4 passes only |
+| 25–32 | Solid — drill the 🟡/❌ docs' gyms this week |
+| < 25 | Reset R1/R2 passes on every ❌ topic before booking anything |
