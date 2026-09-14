@@ -72,12 +72,17 @@ predict what it will print, *then* read. Revision: Core Card + Gym only (~6 min)
 | 3 | [Races, atomicity & CAS](03-atomicity-races-cas.md) | D7–D9 | Ex1, Ex3 | `volatile` ≠ atomic. `count++` is three operations |
 | 4 | [Locks, deadlock & conditions](04-locks-deadlock-conditions.md) | D10–D12 | Ex5, Ex6, Ex7 | Deadlock is never "two locks" — it's **two orders** |
 | 5 | [Hand-off: blocking queues & backpressure](05-handoff-blocking-queues.md) | D13–D15 | Ex8 | A queue doesn't equalise speeds — it picks **block / drop / grow** |
+| 8 | [ThreadPoolExecutor internals](08-threadpool-internals.md) | D22–D24 | Ex13 | The **queue is tried before the pool grows** — that one inversion explains everything |
+| 9 | [ForkJoin, parallel streams & virtual threads](09-forkjoin-parallel-virtual-threads.md) | D25–D28 | Ex14 | Ask **"what kind of work is this?"** before choosing anything |
+
+*(Topics 6 and 7 — shared structures and coordination — are in progress and slot
+in between 5 and 8.)*
 
 ---
 
 ## 🎯 The exercises
 
-All eight start broken. Each one is a bug you watched happen in a demo.
+Each one starts broken, and each is a bug you watched happen in a demo.
 
 | # | Class | Broken because | Demo |
 |---|---|---|---|
@@ -89,6 +94,8 @@ All eight start broken. Each one is a bug you watched happen in a demo.
 | 6 | `Ex6Cache` | cache stampede + a `HashMap` shared across threads | D12 |
 | 7 | `Ex7Queue` | no locking, no blocking, overwrites when full | D12 |
 | 8 | `Ex8Pipeline` | unbounded backlog · `poll()` spin · stop-flag shutdown drops the queue | D13–D15 |
+| 13 | `Ex13Pool` | submission rule inverted — grows to max *before* trying the queue | D22, D24 |
+| 14 | `Ex14Runner` | one executor strategy applied to both CPU-bound and IO-bound work | D25–D27 |
 
 **The tests are the point.** Each one runs 8–32 threads behind a start gate and
 repeats the whole trial 20–200 times, because a single trial of broken code has
@@ -99,6 +106,12 @@ Ex8 is the first one that **mostly works** when you open it — items really do
 flow through and get processed. It carries three independent defects, each with
 its own test, because that is how production systems are broken: not obviously,
 but under a condition nobody tested.
+
+Ex13 goes further still: one of its six tests **passes on the broken pool**, and
+that is deliberate. A pool whose submission rule is inverted still runs every
+task and still rejects when genuinely saturated — it just creates threads for
+load a queue slot would have absorbed. Nothing about it looks wrong, which is
+precisely how that bug reaches production.
 
 `SolutionTests` runs the identical assertions against the reference code. If
 those pass and yours don't, the harness is sound and the bug is yours.
@@ -127,28 +140,47 @@ Real numbers from the demos, so you know what to expect:
 | D15 `volatile` flag + `take()` shutdown | **never exits** — parked in `take()`, `alive=true` after 2s |
 | D15 `interrupt()` shutdown | 8,744 of 10,000 processed — **1,256 abandoned** |
 | D15 poison pill | **10,000 of 10,000** — exact |
+| D22 pool core=2 max=10 queue=100, 60 tasks | **2 threads, 58 queued** — 8 permitted threads never created |
+| D22 same pool, queue=4 (only change) | **10 threads**, 46 rejected |
+| D22 `newFixedThreadPool(2)` | **1,000,002 tasks queued in 104 ms** — never rejects, fails as heap |
+| D22 `newCachedThreadPool`, 1,000 tasks | **1,000 threads** |
+| D23 Discard vs CallerRuns, 2,000 tasks | lost **1,990 in <1 ms** vs **0 in 668 ms** |
+| D24 IO sizing: `cores+1` vs 48 threads | 12.5× vs **~42×** speedup |
+| D25 `fork(); join();` per half | **0.5–0.7×** — *slower* than the plain loop (6/6 runs) |
+| D26 blocking in the common pool | unrelated CPU stream **7.0–9.8× slower**, JVM-wide |
+| D27 10,000 tasks × 100ms blocking | 12-thread pool **115/sec** vs virtual threads **63,700/sec** (~550×) |
+| D27 virtual thread pinned by `synchronized` | **105–156× slower** than `ReentrantLock` (9 of 11 runs) |
 
 Run them yourself; the numbers move but the conclusions don't.
 
 ---
 
-## ⏭️ Not yet covered
+## 🧱 How the modules are grouped
 
-Topics 1–4 are the **foundations block**; topic 5 opens the **"moving work
-between threads"** block. Still to build, in this order — each one reuses the
-artifact built by the one before it, so revision happens through *use*:
+Not by API, but by **problem schema** — you index concurrency knowledge by "what
+problem does this solve", and grouping by class name produces recognition without
+recall. Each block's artifact feeds the next, so revision happens through *use*
+rather than review.
 
-| # | Topic | Reuses |
+| Block | Topics | The artifact it hands forward |
 |---|---|---|
-| 6 | Shared structures — `ConcurrentHashMap` (compute/merge), `CopyOnWriteArrayList`, `ThreadLocal` and its pool-leak hazard | check-then-act (D8) in new clothing |
-| 7 | Coordination — `CountDownLatch`, `CyclicBarrier`, `Semaphore`, `Phaser` as a 2×2, not four APIs | latch deadlocks foreshadowed in topic 4 |
-| 8 | `ThreadPoolExecutor` internals — core → **queue** → max → reject | Ex8's pipeline *is* a thread pool; here you build one |
-| 9 | ForkJoin, parallel streams, **virtual threads**, structured concurrency | ScopedValue vs the `ThreadLocal` from topic 6 |
-| 10 | **Capstone incident** — diagnose a planted deadlock + pool exhaustion + ThreadLocal leak from thread dumps alone (`jstack`, `jcmd`, JFR) | everything |
+| **A — Foundations** | 1–4 | what a thread is, and why the bugs happen |
+| **B — Moving work between threads** | 5–7 | Ex7's hand-built bounded queue, Ex8's pipeline |
+| **C — Who runs the work** | 8–9 | Ex13 turns that pipeline into a real thread pool |
+| **D — Capstone** | 10 | the incident, which needs all of it at once |
+
+| # | Topic | Reuses | Status |
+|---|---|---|---|
+| 6 | Shared structures — `ConcurrentHashMap` (compute/merge), `CopyOnWriteArrayList`, `ThreadLocal` and its pool-leak hazard | check-then-act (D8) in new clothing | 🔄 in progress |
+| 7 | Coordination — `CountDownLatch`, `CyclicBarrier`, `Semaphore`, `Phaser` as a 2×2, not four APIs | latch deadlocks foreshadowed in topic 4 | 🔄 in progress |
+| 8 | `ThreadPoolExecutor` internals — core → **queue** → max → reject | Ex7's queue + Ex8's pipeline become a pool | ✅ |
+| 9 | ForkJoin, parallel streams, **virtual threads**, structured concurrency | `ScopedValue` vs topic 6's `ThreadLocal` | ✅ |
+| 10 | **Capstone incident** — diagnose a planted deadlock + pool exhaustion + ThreadLocal leak from thread dumps alone (`jstack`, `jcmd`, JFR) | everything | 🔄 in progress |
 
 Topic 10 is a simulation rather than a topic: you get a broken service and the
 tools, and must work out *which* mechanism applies with no topic label to tell
-you. That last step is the one interviews and production actually test.
+you. That last step is the one interviews and production actually test, and the
+one a topic-by-topic curriculum never trains.
 
 ---
 

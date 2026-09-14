@@ -50,3 +50,9 @@ Fast producer, slow consumer, unbounded queue, 1.5s. Which loses data?	Neither -
 1,000,000 hand-offs through ArrayBlockingQueue: faster at 1P/1C or 4P/4C?	4P/4C, 134ms vs 289ms - park/unpark dominates, not lock contention
 You shut a pipeline down by interrupting its workers. What did you just do?	Abandoned everything still queued - prompt, clean, and silently lossy
 Idle consumer pool, zero traffic, pods pinned at 100% CPU. One line is to blame. Which?	A while-loop around poll() - it is a busy-wait; block in take()/poll(timeout) instead
+Pool core=2 max=10 queue=100, 60 tasks arrive at once. Threads running?	2 - 58 go to the queue; growth needs the queue FULL first
+You raise maxPoolSize from 10 to 50 and nothing changes. Why?	The queue never fills, so the growth step never runs - shrink the queue instead
+Discard policy reports great latency, CallerRuns reports 600ms. Which is failing?	Discard - it lost 1,990 of 2,000 tasks in under 1ms. Fast because it did nothing
+You write fork() then join() on each half. Speedup?	NONE - measured 0.5-0.7x, slower than the plain loop it replaced
+A parallel stream blocks on IO; an unrelated endpoint slows 8x. Why?	Both share ForkJoinPool.commonPool - one JVM-wide pool, no bulkhead
+10,000 blocking calls move to virtual threads but throughput barely moves. Cause?	synchronized pins the carrier - measured 105-156x penalty at ZERO contention

@@ -98,3 +98,16 @@ Which pool is built on SynchronousQueue, and why?	newCachedThreadPool - a failed
 ArrayBlockingQueue vs LinkedBlockingQueue internals?	One lock + pre-allocated array vs two locks (put/take) + a node allocated per item
 Which BlockingQueue is not FIFO?	PriorityBlockingQueue - and it is unbounded too; both facts bite
 What backs ScheduledThreadPoolExecutor?	A DelayQueue - elements stay invisible until their delay expires
+In what order does a pool consult core, queue and max?	core → QUEUE → max → reject; the queue is tried BEFORE the pool grows
+Why is the queue tried before growing the pool?	A queue slot is a pointer; a thread is ~1MB plus a scheduler entity
+When is maxPoolSize effectively dead code?	When the queue is large - it never fills, so the growth step never runs
+Which Executors factory has an unbounded QUEUE?	newFixedThreadPool and newSingleThreadExecutor - they can never reject
+Which Executors factory has unbounded THREADS?	newCachedThreadPool - SynchronousQueue always refuses, so it always grows
+Which pool method hides the exception, submit or execute?	submit - FutureTask stores it and tells nobody until get()
+What does shutdownNow() return, and why does it matter?	The tasks never started - it makes the data loss countable
+What is the correct ForkJoin ordering?	right.fork(); left.compute(); right.join()
+Which pool does parallelStream() use?	ForkJoinPool.commonPool - JVM-wide, cores-1, shared, not bulkheadable
+What makes a virtual thread cheap?	Blocking, not computing - a blocked one holds no OS thread at all
+What pins a virtual thread on Java 21?	synchronized - it holds the carrier's monitor so the thread cannot unmount
+Which lock does NOT pin a virtual thread?	ReentrantLock
+Is newVirtualThreadPerTaskExecutor a pool?	No - a factory. Never pool virtual threads

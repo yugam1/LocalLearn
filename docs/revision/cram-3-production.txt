@@ -33,3 +33,8 @@ What does queue capacity actually decide?	Where your system fails - it is a desi
 shutdown() vs shutdownNow()?	Drain the queue then stop vs interrupt and RETURN the undone tasks
 Pipeline equivalent of shutdown() vs shutdownNow()?	Poison pill (drain) vs interrupt (abandon)
 Which verb should a production consumer loop use?	poll(timeout, unit) - parks efficiently yet wakes so shutdown checks get a look-in
+Which pool number should you size first?	The queue - it decides whether maxPoolSize is reachable at all
+Total pool capacity before rejection?	maxPoolSize + queueCapacity
+Which rejection policy IS backpressure?	CallerRunsPolicy - the submitter runs it, so its arrival rate drops to zero
+Flag to find virtual-thread pinning?	-Djdk.tracePinnedThreads=full
+Rule that makes pinning impossible?	Never hold a monitor across a blocking call

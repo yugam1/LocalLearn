@@ -1,12 +1,12 @@
 # 🎤 Mock Interview — Interleaved Round
 
-> **How to use:** 28 questions, deliberately shuffled across every phase —
+> **How to use:** 33 questions, deliberately shuffled across every phase —
 > interleaving is the point (blocked practice feels better; mixed practice
 > retains better). Answer OUT LOUD in full sentences before opening anything.
 > Score yourself: ✅ fluent · 🟡 got there slowly · ❌ missed. Anything 🟡/❌ →
 > that doc's Retrieval Gym goes back on your schedule.
 >
-> Rounds: do 1–14 in one sitting, 15–28 in another. Re-shuffle by starting from
+> Rounds: do 1–17 in one sitting, 18–33 in another. Re-shuffle by starting from
 > a random number.
 
 ---
@@ -69,12 +69,22 @@
 
 **28.** Your consumer pool is idle overnight yet the pods sit at 100% CPU. One line of code is responsible. What is it, how would you confirm it from a thread dump, and what replaces it? *(→ 02-concurrency/05, 02-concurrency/01)*
 
+**29.** Your pool is `core=2, max=10, queue=100`. Sixty tasks arrive at once and monitoring shows **two** active threads. Your teammate raises `maxPoolSize` to 50 and nothing changes. Explain why, and tell me which number they should actually have changed. *(→ 02-concurrency/08)*
+
+**30.** Under a load spike, Pool A (DiscardPolicy) reports fast, healthy response times and Pool B (CallerRunsPolicy) reports latency climbing to 600ms+. Which one is actually failing, and how would you tell from metrics alone? *(→ 02-concurrency/08, 02-concurrency/05)*
+
+**31.** `newFixedThreadPool` and `newCachedThreadPool` each have one unbounded dimension. Name both, say what each one's OOM looks like, and explain what `SynchronousQueue` has to do with the second. *(→ 02-concurrency/08, 02-concurrency/05)*
+
+**32.** A colleague converts a hot loop to `list.parallelStream()` and an unrelated endpoint elsewhere in the service gets 8× slower. Explain the mechanism, and why no amount of tuning that endpoint will fix it. *(→ 02-concurrency/09)*
+
+**33.** You migrate 10,000 blocking calls from a 12-thread pool to virtual threads and throughput barely moves, though the benchmark promised ~550×. The code uses `synchronized` around each call. Explain what is happening, how you would confirm it in one JVM flag, and the fix. *(→ 02-concurrency/09, 02-concurrency/04)*
+
 ---
 
 ## Scoring
 
 | ✅ count | Verdict |
 |---|---|
-| 25–28 | Interview-ready on covered material — maintain with R4 passes only |
-| 19–24 | Solid — drill the 🟡/❌ docs' gyms this week |
-| < 19 | Reset R1/R2 passes on every ❌ topic before booking anything |
+| 29–33 | Interview-ready on covered material — maintain with R4 passes only |
+| 22–28 | Solid — drill the 🟡/❌ docs' gyms this week |
+| < 22 | Reset R1/R2 passes on every ❌ topic before booking anything |

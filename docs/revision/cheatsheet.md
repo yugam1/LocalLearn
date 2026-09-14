@@ -310,6 +310,91 @@ BOUNDED    produced    52,958 | consumed 51,934 | backlog     1,024        (~144
 
 ---
 
+## 02.8 · ThreadPoolExecutor Internals
+*Full doc: [`../02-concurrency/08-threadpool-internals.md`](../02-concurrency/08-threadpool-internals.md)*
+
+**Mental model:** A thread pool has four numbers and they are **not** consulted
+in the order you read them. For every submitted task the pool asks: *below core?
+→ start a thread. Otherwise, **will the queue take it?** → queue it. Only if the
+queue **refuses** → grow toward max. Only if that fails too → reject.* The queue
+is tried **before** the pool is allowed to grow, because a queue slot is a
+pointer and a thread is a megabyte. Every surprising thing a pool does follows
+from that one inversion.
+
+```
+task → workers < core?     → NEW THREAD
+     → queue.offer(task)?  → QUEUED            ← tried BEFORE growing
+     → workers < max?      → NEW THREAD
+     → else                → RejectedExecutionHandler
+
+measured (D22, core=2 max=10 queue=100, 60 simultaneous tasks):
+    poolSize=2   active=2   queued=58     ← 8 permitted threads never created
+same pool, queue=4, the ONLY change:
+    poolSize=10  queued=4   accepted=14   rejected=46
+```
+
+**The decision rule:** **size the queue first, because the queue is what decides
+whether `maxPoolSize` exists at all.** A large queue buys latency tolerance and
+makes max unreachable; a small queue buys concurrency and makes rejection real.
+You cannot have both, and picking neither gives you the first one by accident.
+
+**Five rules you must never get wrong:**
+1. **Queue before growth.** With a large or unbounded queue, `maxPoolSize` is not a safety limit — it is unreachable code. You would need 103 concurrent tasks to create thread #3 above.
+2. `newFixedThreadPool` and `newSingleThreadExecutor` have an **unbounded** queue: they can never reject, so they fail as heap instead. Measured: 1,000,000 tasks queued in 104 ms behind 2 workers, nothing refused.
+3. `newCachedThreadPool` has **unbounded threads** — a `SynchronousQueue` (capacity zero, topic 5) guarantees the queue always refuses, so every task with no idle worker creates one. Measured: 1,000 tasks → 1,000 threads.
+4. Sizing is one question, not two formulas: **what fraction of the task actually holds a core?** CPU-bound ≈ cores; IO-bound ≈ cores × (1 + wait/compute). Measured cost of confusing them: **12.5× vs 42×**.
+5. `submit()` **swallows** the exception into a `Future` and tells nobody; `execute()` lets it reach the `UncaughtExceptionHandler` and kills the worker. Fire-and-forget `submit()` is a failure detector with the detector removed.
+
+*Run first: D22 (the staircase, and two `Executors` factories failing), D23 (four
+rejection policies, and the fastest producer is the one that lost everything),
+D24 (two sizing sweeps, three shutdowns, one vanishing exception).*
+
+---
+
+## 02.9 · ForkJoin, Parallel Streams & Virtual Threads
+*Full doc: [`../02-concurrency/09-forkjoin-parallel-virtual-threads.md`](../02-concurrency/09-forkjoin-parallel-virtual-threads.md)*
+
+**Mental model:** This entire topic is one question asked before you choose
+anything: **what kind of work is this?** There are three answers, each with a
+different right tool, and every mistake on this page is the answer to one
+question being applied to another.
+
+```
+                                  what kind of work is this?
+                                              |
+   CPU-bound, splits recursively  ────────────┼──── ForkJoinPool / parallel stream
+   (sum a tree, sort, scan)                   |     work-stealing deques, cores-1
+                                              |
+   CPU-bound, independent tasks   ────────────┼──── bounded platform pool (topic 8)
+   (render N images)                          |     because cores are the scarce thing
+                                              |
+   IO-bound, lots of it           ────────────┴──── ONE VIRTUAL THREAD PER TASK
+   (call 10,000 services)                           a blocked one holds no OS thread
+
+measured (D27 §2, 10,000 tasks each blocked 100ms):
+    platform pool of 12      115 tasks/sec        ← topic 8's whole sizing problem
+    platform pool of 1000  8,482 tasks/sec
+    virtual thread per task 63,694 tasks/sec      ← ~550x the cores-sized pool
+```
+
+**The decision rule:** **if it blocks, it is not CPU work — get it off the
+ForkJoin pools entirely.** Blocking inside a parallel stream starves a JVM-wide
+resource; blocking inside `synchronized` on a virtual thread pins a carrier.
+Both are measured below, and both are invisible in the source code.
+
+**Five rules you must never get wrong:**
+1. `fork()` immediately followed by `join()` on the same task **runs the halves sequentially**. Measured: 0.5–0.7× — *slower than the plain loop it replaced*, in 6 of 6 runs. The rule is `right.fork(); left.compute(); right.join();`.
+2. `parallelStream()` runs on `ForkJoinPool.commonPool()` — **one pool for the entire JVM**, `cores - 1` workers, shared with every library you depend on and with any `CompletableFuture` that omits an executor. There is no bulkhead.
+3. Blocking in a parallel stream is a **process-wide** slowdown, not a local one. Measured: an unrelated CPU-only parallel stream went **7.5× slower** while 44 tasks blocked elsewhere in the JVM.
+4. Virtual threads make **blocking** cheap, not computing fast. ~2.3 µs to create one versus ~120 µs for a platform thread, and a blocked one consumes no OS thread at all.
+5. On Java 21, `synchronized` **pins** a virtual thread to its carrier; `ReentrantLock` does not. Measured with **zero contention**: 110 ms → 14,400–17,400 ms. **Never hold a monitor across a blocking call.**
+
+*Run first: D27 (the 550× scale difference, then the pinning collapse — the most
+important measurement on this page), D26 (common-pool starvation), D25 (the
+ordering rule), D28 (what structured concurrency is for).*
+
+---
+
 ## 03.1 · Thread Pools & @Async
 *Full doc: [`../03-async-and-scheduling/01-thread-pools-completablefuture.md`](../03-async-and-scheduling/01-thread-pools-completablefuture.md)*
 

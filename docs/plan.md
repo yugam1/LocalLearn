@@ -94,8 +94,8 @@ becomes topic 10's incident.
 
 | # | Topic | Demos | Exercises | Time | Status |
 |---|------|-------|-----------|------|--------|
-| 8 | ThreadPoolExecutor internals: core → **queue** → max → reject | — | — | 2hr | ⬜ |
-| 9 | ForkJoin, parallel streams, virtual threads, structured concurrency | — | — | 2.5hr | ⬜ |
+| 8 | ThreadPoolExecutor internals: core → **queue** → max → reject | D22–D24 | Ex13 | 2hr | ✅ |
+| 9 | ForkJoin, parallel streams, virtual threads, structured concurrency | D25–D28 | Ex14 | 2.5hr | ✅ |
 
 ### Block D — Capstone
 
@@ -107,11 +107,19 @@ Topic 10 is a simulation, not a topic. You get a broken service and the tools,
 with no label saying which mechanism applies — which is the step interviews and
 production actually test, and the one a topic-by-topic curriculum never trains.
 
-**Built so far:** 15 runnable demos that visibly misbehave (a loop that never
+**Built so far:** 22 runnable demos that visibly misbehave (a loop that never
 exits, 92% memory-reordering anomalies, a self-inflicted deadlock the JVM
-detects, a `HashMap` that spins forever, a queue that eats 140 MB in 0.4s) +
-8 broken exercises with contract tests that fail until fixed. 19 reference
-tests all green.
+detects, a `HashMap` that spins forever, a queue that eats 140 MB in 0.4s, a
+pool that ignores 8 of its 10 permitted threads, a virtual thread made 150×
+slower by one keyword) + 10 broken exercises with contract tests that fail
+until fixed. 28 reference tests all green.
+
+Two results in this module are deliberately reported as **unreplicable**: the
+`ArrayBlockingQueue`-vs-`LinkedBlockingQueue` comparison held in only 5 of 7
+runs, and virtual-thread pinning is bimodal (105–156× in 9 of 11 runs, ~9.5×
+in the other 2 when the scheduler grew the carrier pool). Both are taught as
+"this is what a benchmark you cannot trust looks like" rather than tabulated
+as fact — which is itself one of the more valuable lessons here.
 
 ```bash
 cd concurrency-lab && ./mvnw test -Dtest=ExerciseTests

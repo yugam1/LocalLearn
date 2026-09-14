@@ -196,6 +196,63 @@ DelayQueue	Items invisible until their delay expires — how ScheduledThreadPool
 PriorityBlockingQueue	Unbounded and NOT FIFO — both facts bite
 ```
 
+## 02.8 · ThreadPoolExecutor Internals
+
+```
+Submission rule	core → QUEUE → max → reject. Queue is tried BEFORE growth
+Why queue before growth	A queue slot is a pointer; a thread is ~1MB + a scheduler entity
+maxPoolSize is dead when	The queue is large — it never fills, so step 3 never runs
+Measured: core=2 max=10 queue=100	60 tasks → poolSize 2, queued 58. 8 permitted threads never created
+Same pool, queue=4	poolSize 10, accepted 14, REJECTED 46 — one number changed
+Pool capacity	max + queueCapacity. Beyond that: the rejection handler
+newFixedThreadPool danger	Unbounded LinkedBlockingQueue — 1,000,000 tasks queued in 104ms, no refusal
+newCachedThreadPool danger	SynchronousQueue (cap 0) ⇒ always grows. 1,000 tasks → 1,000 threads
+Rejection ≡ topic 5	CallerRuns=block · Abort/Discard*=drop · unbounded queue=grow
+Measured rejection	Discard lost 1,990/2,000 in <1ms; CallerRuns lost 0 in 668ms (6/6 runs)
+CallerRuns mechanism	Submitter runs the task ⇒ not in its submit loop ⇒ arrival rate → 0
+DiscardOldest drops	The queue HEAD — the requests that already waited longest
+Sizing, one question	What fraction of the task actually HOLDS a core?
+CPU-bound measured	5.3x at 6 threads (6 physical cores), plateau ~10.7x. NOT slower — flat
+IO-bound measured	13 threads 12.5x vs 48 threads ~42x — 'cores+1' on IO work costs 3.4x
+Past ~96 threads	Did NOT replicate: 54x–77x at 240 across runs. Formula ⇒ magnitude only
+shutdown() vs shutdownNow()	Drain (ran 50/50) vs abandon (ran 6/50, RETURNED 44 unstarted)
+shutdownNow's return value	The abandoned tasks — data loss made countable. Do not discard it
+awaitTermination returns	A boolean, FALSE on timeout. Almost nobody reads it
+shutdownNow vs a CPU loop	Cannot stop it. 1.5s task ran all 1,501ms — interruption is a REQUEST
+submit() exception	Caught by FutureTask, stored, NOT rethrown → silence until get()
+execute() exception	UncaughtExceptionHandler fires, worker DIES, pool replaces it
+```
+
+## 02.9 · ForkJoin, Parallel Streams & Virtual Threads
+
+```
+The one question this topic asks	What KIND of work is this? CPU-splittable / CPU-independent / IO
+ForkJoin ordering rule	right.fork(); left.compute(); right.join()
+fork(); join(); per half	NO parallelism — measured 0.5-0.7x, SLOWER than a plain loop (6/6)
+Why per-worker deques	Push/pop own at HEAD lock-free & cache-warm; steal OLDEST from TAIL
+Why steal the oldest	It is the BIGGEST chunk — one steal buys lots of work, steals stay rare
+Leaf threshold	Both ends bad, middle is a 4-orders-of-magnitude plateau. Roughly right is enough
+.parallel() submits to	ForkJoinPool.commonPool() — JVM-wide, cores-1, shared, NOT bulkheadable
+Common-pool starvation	Unrelated CPU stream 7.0-9.8x slower while 44 tasks blocked (6/6 runs)
+Parallel stream criterion	N x cost-per-element, TOTAL. Element count alone predicts nothing
+Boxing cost measured	Stream<Long> ~35x slower sequential, ~19x parallel, vs LongStream
+Virtual thread =	A continuation + JVM scheduler; heap stack from a few hundred bytes
+Mount / unmount	Blocking JDK call → frames to heap, carrier freed. Blocked ⇒ NO OS thread
+Creation cost measured	~2.3us virtual vs ~120us platform — ~50x cheaper
+Scale measured (10k x 100ms)	pool-of-12: 115/sec · pool-of-1000: 8,700/sec · virtual: 63,700/sec
+Virtual threads are NOT	A pool. newVirtualThreadPerTaskExecutor is a FACTORY — never pool them
+PINNING (Java 21)	synchronized holds the CARRIER's monitor ⇒ cannot unmount ⇒ blocks an OS thread
+Pinning measured	110ms → 14,400-17,400ms. 105-156x. ZERO contention (per-task locks)
+Pinning is bimodal	9/11 runs 105-156x; 2/11 ~9.5x when the scheduler grew the carrier pool
+Pinning fix	ReentrantLock (0.8-1.0x) — better: hold NO lock across a blocking call
+Find pinning with	-Djdk.tracePinnedThreads=full
+Virtual threads for CPU work	Gain nothing — nothing blocks, so nothing unmounts
+StructuredTaskScope guarantee	Control leaves the block ⇒ every fork inside has ALREADY finished
+Unstructured cost measured	Failure at 5ms reported at 2,033ms; doomed sibling ran to completion
+Java 21 status	StructuredTaskScope + ScopedValue are PREVIEW — need --enable-preview
+ScopedValue vs ThreadLocal	Immutable + block-scoped vs mutable map per thread. All differences follow
+```
+
 ## 03.1 · Thread Pools & @Async
 
 ```
