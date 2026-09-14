@@ -133,4 +133,95 @@ public final class Contracts {
         /** Worker threads currently alive. Must be 0 after {@link #shutdownAndDrain} returns. */
         int liveWorkers();
     }
+
+    /**
+     * Exercise 13 — see {@code t08pools.D22_PoolGrowthOrder} and
+     * {@code t08pools.D24_SizingLifecycleAndLostExceptions}.
+     *
+     * <p>A thread pool, built from the parts you already own: worker threads
+     * (topic 1), a bounded blocking queue (Ex7), and a draining shutdown
+     * (Ex8/D15). The whole of {@link java.util.concurrent.ThreadPoolExecutor}'s
+     * behaviour that matters is in the four-step submission rule, and you are
+     * going to implement it:
+     *
+     * <pre>
+     *   1. fewer than corePoolSize workers?  -> start a new worker for this task
+     *   2. else, does the QUEUE accept it?   -> queue it
+     *   3. else, fewer than maxPoolSize?     -> start a new worker for this task
+     *   4. else                              -> RejectedExecutionException
+     * </pre>
+     *
+     * Step 2 comes before step 3. That ordering is the entire exercise: get it
+     * backwards and you have built a pool whose queue is never used and which
+     * creates threads for load a queue slot would have absorbed.
+     */
+    public interface MiniPool {
+        /**
+         * Submits a task, following the four-step rule above.
+         *
+         * @throws java.util.concurrent.RejectedExecutionException if the pool is
+         *         at {@code maxPoolSize} and the queue is full, or after any
+         *         shutdown has begun.
+         */
+        void execute(Runnable task);
+
+        /**
+         * Graceful shutdown: stop accepting, <b>run everything already queued</b>,
+         * then stop every worker. Returns only once all workers have terminated.
+         * This is {@code shutdown()} + {@code awaitTermination()} in one call.
+         */
+        void shutdownAndAwait() throws InterruptedException;
+
+        /**
+         * Abrupt shutdown: stop accepting, interrupt the workers, and
+         * <b>return the tasks that were never started</b> so the caller can see
+         * exactly what was abandoned. This is {@code shutdownNow()}.
+         */
+        java.util.List<Runnable> shutdownNow();
+
+        /** Worker threads created and not yet terminated. */
+        int poolSize();
+
+        /** Largest value {@link #poolSize()} ever reached. */
+        int largestPoolSize();
+
+        /** Tasks currently waiting in the queue. */
+        int queueSize();
+
+        /** Tasks that have run to completion. */
+        long completed();
+    }
+
+    /**
+     * Exercise 14 — see {@code t09parallel.D27_VirtualThreadsAndPinning}.
+     *
+     * <p>One runner, two workloads, and <b>no single strategy is correct for
+     * both</b>. That is the entire point: the question "what kind of work is
+     * this?" has to be asked before the executor is chosen, because the right
+     * answer for CPU-bound work is the wrong answer for IO-bound work and vice
+     * versa.
+     *
+     * <p>Both methods must return results in the same order as the tasks they
+     * were given, and must propagate a task's exception rather than swallowing
+     * it (D24: a {@code Future} nobody asks is a failure nobody hears).
+     */
+    public interface WorkloadRunner extends AutoCloseable {
+        /**
+         * Runs tasks that spend essentially all their time <b>computing</b>.
+         * Must actually run them in parallel across the machine's cores.
+         */
+        java.util.List<Long> runCpuBound(java.util.List<java.util.concurrent.Callable<Long>> tasks)
+                throws Exception;
+
+        /**
+         * Runs tasks that spend essentially all their time <b>blocked</b>.
+         * Must achieve concurrency far beyond the core count — thousands of
+         * simultaneously-blocked tasks is the target, not dozens.
+         */
+        java.util.List<Long> runIoBound(java.util.List<java.util.concurrent.Callable<Long>> tasks)
+                throws Exception;
+
+        @Override
+        void close();
+    }
 }

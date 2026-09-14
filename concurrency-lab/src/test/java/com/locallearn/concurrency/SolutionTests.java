@@ -6,16 +6,20 @@ import com.locallearn.concurrency.api.Contracts.ComputeOnceCache;
 import com.locallearn.concurrency.api.Contracts.Counter;
 import com.locallearn.concurrency.api.Contracts.Inventory;
 import com.locallearn.concurrency.api.Contracts.InterruptibleWorker;
+import com.locallearn.concurrency.api.Contracts.MiniPool;
 import com.locallearn.concurrency.api.Contracts.Pipeline;
 import com.locallearn.concurrency.api.Contracts.StopSignal;
+import com.locallearn.concurrency.api.Contracts.WorkloadRunner;
 import com.locallearn.concurrency.contract.BankContract;
 import com.locallearn.concurrency.contract.BoundedQueueContract;
 import com.locallearn.concurrency.contract.ComputeOnceCacheContract;
 import com.locallearn.concurrency.contract.CounterContract;
 import com.locallearn.concurrency.contract.InterruptibleWorkerContract;
 import com.locallearn.concurrency.contract.InventoryContract;
+import com.locallearn.concurrency.contract.MiniPoolContract;
 import com.locallearn.concurrency.contract.PipelineContract;
 import com.locallearn.concurrency.contract.StopSignalContract;
+import com.locallearn.concurrency.contract.WorkloadRunnerContract;
 import com.locallearn.concurrency.solutions.Solutions;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -100,6 +104,22 @@ class SolutionTests {
         @Override protected Pipeline newPipeline(int capacity, int workers,
                                                  Consumer<String> processor) {
             return new Solutions.Sol8Pipeline(capacity, workers, processor);
+        }
+    }
+
+    @Nested
+    @DisplayName("Sol13 — a thread pool built from scratch")
+    class Sol13 extends MiniPoolContract {
+        @Override protected MiniPool newPool(int corePoolSize, int maxPoolSize, int queueCapacity) {
+            return new Solutions.Sol13Pool(corePoolSize, maxPoolSize, queueCapacity);
+        }
+    }
+
+    @Nested
+    @DisplayName("Sol14 — what kind of work is this?")
+    class Sol14 extends WorkloadRunnerContract {
+        @Override protected WorkloadRunner newRunner() {
+            return new Solutions.Sol14Runner();
         }
     }
 }

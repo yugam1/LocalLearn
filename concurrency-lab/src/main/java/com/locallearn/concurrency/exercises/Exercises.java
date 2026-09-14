@@ -454,4 +454,237 @@ public final class Exercises {
             return alive;
         }
     }
+
+    // ═════════════════════════════════════════════════════════ EXERCISE 13
+    /**
+     * <b>Build a thread pool.</b> See {@code t08pools.D22_PoolGrowthOrder} and
+     * {@code t08pools.D24_SizingLifecycleAndLostExceptions}.
+     *
+     * <p>This is the exercise the whole curriculum has been building toward, and
+     * you already own every part of it: worker threads that park rather than
+     * spin (Ex7), a bounded queue that applies backpressure (Ex7), and a
+     * shutdown that drains instead of abandoning (Ex8's poison pill). What is
+     * new is the <b>submission rule</b>, and it is the one thing almost everyone
+     * gets backwards:
+     *
+     * <pre>
+     *   1. workers &lt; core?        -> start a worker for this task
+     *   2. queue accepts the task? -> queue it            &lt;-- BEFORE growing
+     *   3. workers &lt; max?         -> start a worker for this task
+     *   4. otherwise               -> RejectedExecutionException
+     * </pre>
+     *
+     * <p>Four planted defects, each its own failing test:
+     * <ol>
+     *   <li><b>The order is inverted.</b> {@link Ex13Pool#execute} grows the pool
+     *       to {@code maxPoolSize} before it ever offers to the queue, so the
+     *       queue is dead weight and the pool creates threads for load one queue
+     *       slot would have absorbed (D22).</li>
+     *   <li><b>Busy-wait.</b> Workers spin on {@code poll()} instead of parking
+     *       in {@code take()}, burning a core each while idle (D14, Ex7, Ex8).</li>
+     *   <li><b>Lossy graceful shutdown.</b> {@code shutdownAndAwait} flips a flag,
+     *       so queued tasks are abandoned rather than drained (D15, D24).</li>
+     *   <li><b>{@code shutdownNow} hides the damage.</b> It returns an empty list
+     *       instead of the tasks it never started, so the caller cannot see,
+     *       count or requeue what was lost (D24).</li>
+     * </ol>
+     *
+     * <p>Hint for defect 3: you cannot use a poison pill <em>and</em> honour
+     * {@code shutdownNow}'s interrupt in the same worker loop without deciding
+     * what each one means. Write the two shutdowns as the two different verbs
+     * they are — drain versus abandon.
+     */
+    public static final class Ex13Pool implements com.locallearn.concurrency.api.Contracts.MiniPool {
+        private final int corePoolSize;
+        private final int maxPoolSize;
+        private final java.util.concurrent.BlockingQueue<Runnable> queue;
+        private final java.util.List<Thread> workers =
+                java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+        private final java.util.concurrent.atomic.AtomicLong completed =
+                new java.util.concurrent.atomic.AtomicLong();
+        private final java.util.concurrent.atomic.AtomicInteger largest =
+                new java.util.concurrent.atomic.AtomicInteger();
+        private volatile boolean stopped;
+
+        public Ex13Pool(int corePoolSize, int maxPoolSize, int queueCapacity) {
+            this.corePoolSize = corePoolSize;
+            this.maxPoolSize = maxPoolSize;
+            this.queue = new java.util.concurrent.ArrayBlockingQueue<>(queueCapacity);
+        }
+
+        @Override
+        public void execute(Runnable task) {
+            if (stopped) {
+                throw new java.util.concurrent.RejectedExecutionException("pool is shut down");
+            }
+            // TODO broken (defect 1): this grows the pool all the way to
+            // maxPoolSize BEFORE it ever tries the queue — the submission rule
+            // upside down. Result: the queue is never used while threads remain
+            // available, which is exactly backwards from ThreadPoolExecutor (D22).
+            synchronized (workers) {
+                if (workers.size() < maxPoolSize) {
+                    addWorker(task);
+                    return;
+                }
+            }
+            if (!queue.offer(task)) {
+                throw new java.util.concurrent.RejectedExecutionException("queue full");
+            }
+        }
+
+        private void addWorker(Runnable firstTask) {
+            Thread worker = new Thread(() -> {
+                Runnable task = firstTask;
+                while (!stopped) {                  // TODO broken (defect 3): a flag stops
+                    if (task != null) {             // workers wherever they are, abandoning
+                        try {                       // whatever is still queued
+                            task.run();
+                        } catch (RuntimeException e) {
+                            // a pool must survive a failing task
+                        }
+                        completed.incrementAndGet();
+                    }
+                    task = queue.poll();            // TODO broken (defect 2): poll() returns
+                                                    // null immediately, so an idle worker
+                                                    // spins at 100% CPU (D14's verb grid)
+                }
+            }, "minipool-worker-" + workers.size());
+            workers.add(worker);
+            largest.accumulateAndGet(workers.size(), Math::max);
+            worker.start();
+        }
+
+        @Override
+        public void shutdownAndAwait() throws InterruptedException {
+            stopped = true;                         // TODO broken (defect 3): "stop now",
+            for (Thread worker : workers) {         // not "finish the queue, then stop"
+                worker.join();
+            }
+        }
+
+        @Override
+        public java.util.List<Runnable> shutdownNow() {
+            stopped = true;
+            for (Thread worker : workers) {
+                worker.interrupt();
+            }
+            // TODO broken (defect 4): the tasks still sitting in the queue are
+            // silently dropped. shutdownNow()'s whole contract is that it HANDS
+            // THEM BACK so the caller can count or requeue them (D24).
+            return java.util.List.of();
+        }
+
+        @Override
+        public int poolSize() {
+            int alive = 0;
+            synchronized (workers) {
+                for (Thread worker : workers) {
+                    if (worker.isAlive()) {
+                        alive++;
+                    }
+                }
+            }
+            return alive;
+        }
+
+        @Override
+        public int largestPoolSize() {
+            return largest.get();
+        }
+
+        @Override
+        public int queueSize() {
+            return queue.size();
+        }
+
+        @Override
+        public long completed() {
+            return completed.get();
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════ EXERCISE 14
+    /**
+     * <b>Two workloads, one runner, and no single strategy that fits both.</b>
+     * See {@code t09parallel.D27_VirtualThreadsAndPinning}.
+     *
+     * <p>Everything below is written the way a reasonable person writes it the
+     * first time: one executor, sized to the core count, shared by both methods,
+     * with a lock to keep the shared result list safe. Every individual decision
+     * is defensible. Together they are wrong, and the tests will tell you which
+     * workload each decision ruins.
+     *
+     * <p>Two planted defects:
+     * <ol>
+     *   <li><b>One strategy for two kinds of work.</b> A pool of {@code cores}
+     *       platform threads is right for CPU-bound work and catastrophic for
+     *       IO-bound work: 400 tasks that each block for 100 ms can only run
+     *       {@code cores} at a time. D27 measured this exact shape — a
+     *       cores-sized pool managed ~120 blocking tasks per second where
+     *       virtual threads managed ~68,000.</li>
+     *   <li><b>The lock is held across the task itself.</b> {@code synchronized}
+     *       around {@code task.call()} serialises every task, so neither
+     *       workload gets any parallelism at all. And once you switch the IO path
+     *       to virtual threads it gets a second, subtler penalty: a virtual
+     *       thread that blocks inside {@code synchronized} is <b>pinned</b> to
+     *       its carrier and cannot unmount. D27 measured a <b>108x</b> collapse
+     *       from pinning alone, with zero contention.</li>
+     * </ol>
+     *
+     * <p>Your job is to ask "what kind of work is this?" separately for each
+     * method, and to make sure that whatever synchronisation survives does not
+     * wrap a blocking call. Hint: the lock exists only to protect a list. There
+     * are ways to collect results in order that need no lock at all.
+     */
+    public static final class Ex14Runner
+            implements com.locallearn.concurrency.api.Contracts.WorkloadRunner {
+
+        private static final int CORES = Runtime.getRuntime().availableProcessors();
+
+        // TODO broken (defect 1): ONE executor for two completely different
+        // kinds of work. Sized for CPU-bound work, which makes it the wrong
+        // shape for anything that blocks.
+        private final java.util.concurrent.ExecutorService executor =
+                java.util.concurrent.Executors.newFixedThreadPool(CORES);
+
+        private final Object lock = new Object();
+
+        @Override
+        public java.util.List<Long> runCpuBound(
+                java.util.List<java.util.concurrent.Callable<Long>> tasks) throws Exception {
+            return runAll(tasks);
+        }
+
+        @Override
+        public java.util.List<Long> runIoBound(
+                java.util.List<java.util.concurrent.Callable<Long>> tasks) throws Exception {
+            return runAll(tasks);                   // TODO broken: same executor, both workloads
+        }
+
+        private java.util.List<Long> runAll(
+                java.util.List<java.util.concurrent.Callable<Long>> tasks) throws Exception {
+            java.util.List<java.util.concurrent.Future<Long>> futures = new java.util.ArrayList<>();
+            for (java.util.concurrent.Callable<Long> task : tasks) {
+                futures.add(executor.submit(() -> {
+                    // TODO broken (defect 2): the lock is held across the whole
+                    // task, including whatever blocking it does. This serialises
+                    // every task, and on a virtual thread it also PINS the
+                    // carrier for the duration of the blocking call (D27).
+                    synchronized (lock) {
+                        return task.call();
+                    }
+                }));
+            }
+            java.util.List<Long> results = new java.util.ArrayList<>(futures.size());
+            for (java.util.concurrent.Future<Long> future : futures) {
+                results.add(future.get());          // preserves submission order
+            }
+            return results;
+        }
+
+        @Override
+        public void close() {
+            executor.shutdownNow();
+        }
+    }
 }
