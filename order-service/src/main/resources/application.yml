@@ -81,3 +81,17 @@ logging:
   level:
     root: INFO
     com.ecommerce.orderservice: DEBUG
+
+---
+# Profile: vthreads — serve HTTP requests on Java 21 virtual threads.
+# A/B experiment for concurrency topic H: run with
+#   SPRING_PROFILES_ACTIVE=vthreads ./mvnw spring-boot:run
+# then compare thread names in logs ([tomcat-handler-N] virtual vs platform)
+# and revisit the Task 8 pool-sizing formulas under load.
+spring:
+  config:
+    activate:
+      on-profile: vthreads
+  threads:
+    virtual:
+      enabled: true
