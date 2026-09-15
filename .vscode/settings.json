@@ -2,6 +2,10 @@
   "code-runner.executorMap": {
     "java": "cd $dir && javac -proc:full -cp \"$workspaceRoot/lib/lombok.jar\" -d . $fileName && java -cp \".:$workspaceRoot/lib/lombok.jar\" $fileNameWithoutExt"
   },
+  "//": "concurrency-lab is a Maven module, not standalone files: its classes live in several packages and reference support/ and api/. Compiling one file with only lombok on the classpath cannot resolve those, so route it through source-file mode with the module's compiled classes on the classpath. Needs `./mvnw -q compile` once (and again after changing anything outside exercises/).",
+  "code-runner.executorMapByGlob": {
+    "**/concurrency-lab/**/*.java": "cd $workspaceRoot/concurrency-lab && java -classpath target/classes $fullFileName"
+  },
   "code-runner.runInTerminal": true,
   "code-runner.saveFileBeforeRun": true,
   "java.compile.nullAnalysis.mode": "automatic",

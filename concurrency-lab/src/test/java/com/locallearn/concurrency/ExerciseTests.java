@@ -30,6 +30,7 @@ import com.locallearn.concurrency.contract.MiniPoolContract;
 import com.locallearn.concurrency.contract.PipelineContract;
 import com.locallearn.concurrency.contract.StopSignalContract;
 import com.locallearn.concurrency.contract.WorkloadRunnerContract;
+import com.locallearn.concurrency.exercises.Ex01Counter;
 import com.locallearn.concurrency.exercises.Exercises;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -58,7 +59,7 @@ class ExerciseTests {
     @DisplayName("Ex1 — lost updates")
     class Ex1 extends CounterContract {
         @Override protected Counter newCounter() {
-            return new Exercises.Ex1Counter();
+            return new Ex01Counter();
         }
     }
 

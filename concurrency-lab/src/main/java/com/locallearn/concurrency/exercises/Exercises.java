@@ -2,7 +2,6 @@ package com.locallearn.concurrency.exercises;
 
 import com.locallearn.concurrency.api.Contracts.BoundedQueue;
 import com.locallearn.concurrency.api.Contracts.ComputeOnceCache;
-import com.locallearn.concurrency.api.Contracts.Counter;
 import com.locallearn.concurrency.api.Contracts.Inventory;
 import com.locallearn.concurrency.api.Contracts.InterruptibleWorker;
 import com.locallearn.concurrency.api.Contracts.Pipeline;
@@ -51,30 +50,9 @@ public final class Exercises {
     }
 
     // ══════════════════════════════════════════════════════════ EXERCISE 1
-    /**
-     * <b>Fix the lost updates.</b> See {@code t03atomicity.D7_LostUpdates}.
-     *
-     * <p>{@code value++} is read-modify-write: three steps that another thread
-     * can interleave with. Make the increment atomic.
-     *
-     * <p>Hint: there are three valid answers here ({@code AtomicLong},
-     * {@code synchronized}, {@code LongAdder}). Try all three — then look at
-     * D9's benchmark and decide which you would actually ship for a metrics
-     * counter, and which for an ID generator.
-     */
-    public static final class Ex1Counter implements Counter {
-        private long value;
-
-        @Override
-        public void increment() {
-            value++;                    // TODO broken: not atomic
-        }
-
-        @Override
-        public long count() {
-            return value;               // TODO broken: not safely published
-        }
-    }
+    // Moved to its own runnable file: Ex01Counter.java — it carries a main that
+    // stress-checks it, so you can iterate with plain java, no Maven round-trip.
+    //   java -cp target/classes com.locallearn.concurrency.exercises.Ex01Counter
 
     // ══════════════════════════════════════════════════════════ EXERCISE 2
     /**
