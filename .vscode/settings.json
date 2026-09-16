@@ -2,9 +2,9 @@
   "code-runner.executorMap": {
     "java": "cd $dir && javac -proc:full -cp \"$workspaceRoot/lib/lombok.jar\" -d . $fileName && java -cp \".:$workspaceRoot/lib/lombok.jar\" $fileNameWithoutExt"
   },
-  "//": "concurrency-lab is a Maven module, not standalone files: its classes live in several packages and reference support/ and api/. Compiling one file with only lombok on the classpath cannot resolve those, so route it through source-file mode with the module's compiled classes on the classpath. Needs `./mvnw -q compile` once (and again after changing anything outside exercises/).",
+  "//": "concurrency-lab is multi-package (exercises reference support/ and api/), so a single-file javac cannot resolve it. run.sh does `javac -sourcepath src/main/java` on just the file you pressed Run on \u2014 that pulls in only the sources it actually references \u2014 then runs its main. No Maven, no target/, ~1s per run.",
   "code-runner.executorMapByGlob": {
-    "**/concurrency-lab/**/*.java": "cd $workspaceRoot/concurrency-lab && java -classpath target/classes $fullFileName"
+    "**/concurrency-lab/**/*.java": "cd $workspaceRoot/concurrency-lab && ./run.sh $fullFileName"
   },
   "code-runner.runInTerminal": true,
   "code-runner.saveFileBeforeRun": true,

@@ -8,49 +8,79 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
-/**
- * <b>EXERCISE 12 — build a bounded resource pool that actually bounds
- * anything.</b> See {@code t07coordination.D20_SemaphorePermits}.
+/*
+ * EXERCISE 12 — a pool whose limit actually limits
  *
- * <p>Two defects, one per test, and both are real production bugs:
- * <ol>
- *   <li><b>{@code tryAcquire()} and then carrying on anyway.</b> The
- *       non-blocking form returns false when the pool is full, and this code
- *       ignores that and runs the task regardless — so the "limit" is
- *       decorative. If you want the caller to wait, {@code acquire()} is the
- *       verb; if you want to reject, you must actually reject. Running
- *       unaccounted is the one option that is never right, because the
- *       concurrency it permits is unbounded <em>and</em> invisible.</li>
- *   <li><b>{@code release()} after the work instead of in a
- *       {@code finally}.</b> Every task that throws permanently destroys one
- *       slot. The pool does not fail at the first error — it shrinks, one
- *       exception at a time, until the last slot goes and every caller waits
- *       forever, with no deadlock report to explain it (D21).</li>
- * </ol>
+ * THE SCENARIO
+ *   This is the guard in front of a scarce downstream resource — a connection
+ *   pool, a rate-limited third-party API, a GPU. Callers hand execute(task) a
+ *   piece of work; the pool must let at most limit of them run at once and make
+ *   the rest wait their turn. peakConcurrency() and availableSlots() exist so
+ *   the checker can see whether the limit was honoured and whether the slots
+ *   came back.
  *
- * <p>The shape you want, and it is worth memorising as a shape:
- * <pre>{@code
- * slots.acquire();
- * try {
- *     return task.call();
- * } finally {
- *     slots.release();
- * }
- * }</pre>
- * Note that the in-flight counter needs the same discipline, for the same
- * reason.
+ * WHAT IS WRONG RIGHT NOW
+ *   Two defects, one per test:
+ *   1. tryAcquire() is the non-blocking form: it returns false rather than
+ *      waiting when the pool is full. The code stores that answer in acquired,
+ *      ignores it, and calls task.call() either way — so with a limit of 4 and
+ *      32 callers, all 32 can be running at once. The concurrency is unbounded
+ *      AND unmeasured.
+ *   2. slots.release() sits after task.call() with no finally. A task that
+ *      throws jumps over it, and that permit is gone for the life of the
+ *      process. The pool does not break at the first error — it shrinks, one
+ *      exception at a time, until the last slot goes and every caller parks
+ *      forever. No thread dump will call it a deadlock, because a permit has no
+ *      owning thread.
  *
- * <p>Once it passes, go back and ask the design question D20 ends on: at a
- * real service boundary, is {@code acquire()} (wait, invisibly, forever) or
- * {@code tryAcquire(timeout)} (wait a bounded time, then shed load
- * deliberately and countably) the behaviour you want? It is topic 5's
- * block/drop/grow decision at a different layer.
+ * YOUR TASK
+ *   1. execute(Callable) — take a slot with the blocking form, slots.acquire(),
+ *      so a caller with no slot waits instead of running unaccounted.
+ *   2. execute(Callable) — wrap the work in try / finally and release the slot
+ *      in the finally, so a throwing task gives it back.
+ *   3. execute(Callable) — the inFlight counter needs the same discipline:
+ *      decrement it in the finally too, or a failed task leaves the pool
+ *      believing work is still running.
  *
- * <pre>
- * ./mvnw -q compile
- * java -cp target/classes com.locallearn.concurrency.exercises.Ex12Pool   # fast loop
- * ./mvnw test -Dtest='ExerciseTests$Ex12'                                 # the grade
- * </pre>
+ * RULES
+ *   The task's exception must reach the caller unchanged — a pool lends you a
+ *   slot, it does not get to decide your failure did not happen. Callers must
+ *   WAIT, not be silently dropped: the checker counts completions and expects
+ *   every submitted task to have run. The shape, worth memorising as a shape:
+ *     slots.acquire();
+ *     try {
+ *         return task.call();
+ *     } finally {
+ *         slots.release();
+ *     }
+ *
+ *
+ * DONE WHEN
+ *   Running this file prints all PASS and exits 0. The checks are:
+ *   1. 32 callers × 20 tasks against a 4-slot pool, 3 trials: peak concurrency
+ *      never exceeds 4, every task completes, and all 4 slots are free at the
+ *      end.
+ *   2. After 4 tasks that throw, all 4 slots are still there and a healthy task
+ *      submitted afterwards gets one within 3 seconds.
+ *   3. execute() returns the task's own value, and two sequential tasks report
+ *      a peak of 1.
+ *
+ * HOW TO RUN
+ *   Press Run in VS Code (Code Runner, Ctrl/Cmd+Alt+N) with this file open, or:
+ *     cd concurrency-lab
+ *     ./run.sh Ex12Pool
+ *
+ * HINT
+ *   Once it passes, ask the design question D20 ends on: at a real service
+ *   boundary, is acquire() (wait, invisibly, forever) or tryAcquire(timeout)
+ *   (wait a bounded time, then shed load deliberately and countably) the
+ *   behaviour you want? That is topic 5's block/drop/grow decision one layer
+ *   down.
+ *
+ * SEE ALSO
+ *   Demo t07coordination.D20_SemaphorePermits shows the failure live; D21
+ *   covers why a lost permit never appears as a deadlock. Reference solution:
+ *   solutions/Solutions.java.
  */
 public final class Ex12Pool
         implements com.locallearn.concurrency.api.Contracts.BoundedResourcePool {
@@ -67,18 +97,34 @@ public final class Ex12Pool
         this.slots = new java.util.concurrent.Semaphore(limit);
     }
 
+    /*
+     * Runs task while holding one of the pool's limit slots, and must
+     * guarantee two things: never more than limit tasks running at once, and
+     * one release for every acquire on every exit path. Break the first and
+     * the limit is decorative; break the second and the pool shrinks by one
+     * slot per failed task until every caller waits forever.
+     */
     @Override
     public <T> T execute(java.util.concurrent.Callable<T> task) throws Exception {
-        // TODO broken: tryAcquire does not wait — and the task then runs
-        // TODO broken: whether or not a slot was obtained, so nothing is bounded.
+        // WRONG: tryAcquire() returns false instead of waiting when the pool is full,
+        // and the result is recorded but never acted on — the task below runs either
+        // way, so the pool bounds nothing.
+        // TODO block until a slot is genuinely free: slots.acquire(). Callers must wait
+        // TODO their turn, not run unaccounted.
         boolean acquired = slots.tryAcquire();
 
+        // WRONG: the body is not guarded. A task that throws skips both the in-flight
+        // decrement and the release below, so the pool believes work is still running
+        // and one permit is destroyed permanently.
+        // TODO wrap task.call() in a try/finally: acquire above, call inside the try,
+        // TODO and put the two lines of bookkeeping below into the finally.
         peak.accumulateAndGet(inFlight.incrementAndGet(), Math::max);
         T result = task.call();
         inFlight.decrementAndGet();
 
-        // TODO broken: not in a finally — a throwing task never gets here,
-        // TODO broken: and that slot is gone for the lifetime of the process.
+        // TODO move this release into the finally block so it runs on every exit path,
+        // TODO including a thrown exception — a permit never released is gone for the
+        // TODO life of the process, and it never shows up as a deadlock.
         if (acquired) {
             slots.release();
         }
@@ -95,7 +141,9 @@ public final class Ex12Pool
         return slots.availablePermits();
     }
 
-    /** The size the pool was built with — {@link #availableSlots()} must return to it. */
+    /*
+     * The size the pool was built with — availableSlots() must return to it.
+     */
     public int limit() {
         return limit;
     }

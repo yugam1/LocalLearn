@@ -15,49 +15,67 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/**
- * <b>EXERCISE 7 — build a blocking bounded queue.</b>
- * See {@code t04locks.D12_ReadWriteLockAndCondition}.
+/*
+ * EXERCISE 7 — a bounded queue that blocks
  *
- * <p>The hardest one, and the most worth doing: this is
- * {@code ArrayBlockingQueue} in miniature, and writing it once is how you
- * learn to read every bounded-queue-shaped thing you will meet afterwards —
- * including the {@code queueCapacity} on Spring's
- * {@code ThreadPoolTaskExecutor} (docs/phase2_task8.md).
+ * THE SCENARIO
+ *   This is the hand-off buffer between two pools of threads: producers push
+ *   work in, consumers pull it out, and the fixed-size array in the middle is
+ *   what stops a fast producer from burying a slow consumer. It is
+ *   ArrayBlockingQueue in miniature — the same thing sitting behind
+ *   queueCapacity on a Spring task executor.
  *
- * <p>Requirements the test enforces:
- * <ul>
- *   <li>{@code put} blocks while the queue is full; {@code take} blocks while empty.</li>
- *   <li>{@link #peakSize()} never exceeds the capacity — not even transiently.</li>
- *   <li>No items are lost or duplicated across many producers and consumers.</li>
- *   <li><b>No busy-waiting.</b> The test measures CPU time and fails a
- *       spin-wait solution. Blocked threads must actually park.</li>
- *   <li>Both methods stay interruptible.</li>
- * </ul>
+ * WHAT IS WRONG RIGHT NOW
+ *   The skeleton is a plain ring buffer with no lock and no waiting at all. Two
+ *   producers can run items[tail] = item and tail = (tail+1) % len at the same
+ *   time and write to the same slot, and count++ loses updates the same way i++
+ *   does. Worse, neither method ever waits: put keeps writing past a full queue
+ *   and overwrites live items, and take on an empty queue hands the caller null
+ *   instead of waiting for something to arrive.
  *
- * <p>Hint: one {@code ReentrantLock} with <b>two</b> {@code Condition}s
- * ({@code notFull}, {@code notEmpty}). And the rule that catches everyone:
- * wait in a {@code while} loop, never an {@code if} — spurious wakeups are
- * legal, and between being signalled and re-acquiring the lock another
- * thread may already have taken the item you were woken for.
+ * YOUR TASK
+ *   1. put(T) — take a lock, wait while the queue is full, then store the item,
+ *      advance tail, update the counters, and wake a waiting taker.
+ *   2. take() — take the same lock, wait while the queue is empty, then read
+ *      the item, advance head, update count, and wake a waiting putter.
+ *   3. size() / peakSize() — must read count and peak under the same lock that
+ *      writes them, or they report torn values.
  *
- * <p>(Yes, {@code return new ArrayBlockingQueue<>(capacity)} would pass.
- * Don't. Write the mechanism, then go read {@code ArrayBlockingQueue}'s
- * source and notice it is the same thing.)
+ * RULES
+ *   1. No busy-waiting. A while (count == 0) {} spin is functionally correct
+ *      and fails: the checker measures CPU time of a blocked thread. It must
+ *      actually park.
+ *   2. Both methods stay interruptible: keep InterruptedException usable.
+ *   3. Write the mechanism. Delegating to new ArrayBlockingQueue<>(capacity)
+ *      would pass every check and teach you nothing.
  *
- * <p>Every check below joins with a timeout rather than waiting forever. A
- * half-finished queue is the one thing in this lab that can hang your terminal
- * instead of failing it, and "the checker reports a hang" is far more useful
- * than "the checker became one". You will want the same habit in your tests.
+ * DONE WHEN
+ *   Running this file prints all PASS and exits 0. The checks are:
+ *   1. 4 producers and 3 consumers move 12,000 items with none lost or
+ *      duplicated, and peakSize() never exceeds the capacity.
+ *   2. A taker on an empty queue is WAITING, burns no CPU, and wakes on a put.
+ *   3. A putter on a full queue stays blocked until a take() frees a slot, and
+ *      the queue hands items back in FIFO order.
  *
- * <pre>
- * ./mvnw -q compile
- * java -cp target/classes com.locallearn.concurrency.exercises.Ex07Queue   # fast loop
- * ./mvnw test -Dtest='ExerciseTests$Ex7'                                   # the grade
- * </pre>
+ * HOW TO RUN
+ *   Press Run in VS Code (Code Runner, Ctrl/Cmd+Alt+N) with this file open, or:
+ *     cd concurrency-lab
+ *     ./run.sh Ex07Queue
+ *
+ * HINT
+ *   One ReentrantLock with TWO Conditions (notFull, notEmpty). The rule that
+ *   catches everyone: wait in a while loop, never an if — spurious wakeups are
+ *   legal, and between being signalled and re-acquiring the lock another thread
+ *   may already have taken the item you woke for.
+ *
+ * SEE ALSO
+ *   Demo t04locks.D12_ReadWriteLockAndCondition shows lock plus condition live.
+ *   Reference solution: solutions/Solutions.java.
  */
 public final class Ex07Queue<T> implements BoundedQueue<T> {
 
+    // The whole state of the queue. Every one of these is read-modify-written by both
+    // put() and take(), so every one of them needs the same lock held around it.
     private final Object[] items;
     private int head, tail, count, peak;
 
@@ -65,33 +83,67 @@ public final class Ex07Queue<T> implements BoundedQueue<T> {
         this.items = new Object[capacity];
     }
 
+    /*
+     * Must guarantee: the item lands in a free slot, exactly one slot, and
+     * only once the queue has room. If it writes while full it silently
+     * destroys an item a consumer had not read yet; if two producers run these
+     * four lines at once they claim the same tail slot and count loses an
+     * increment.
+     */
     @Override
     public void put(T item) throws InterruptedException {
-        // TODO broken: no locking, no blocking, and it overwrites when full
-        items[tail] = item;
-        tail = (tail + 1) % items.length;
-        count++;
+        // WRONG: nothing guards these four lines and nothing checks for room. A full queue
+        // wraps tail around and overwrites; a second producer interleaves and shares a slot.
+        // TODO acquire the lock, then wait in a `while (count == items.length)` loop on a
+        //      notFull condition before touching anything below.
+        items[tail] = item;                         // TODO must run while holding the lock
+        tail = (tail + 1) % items.length;           // TODO same lock — advance once per item
+        count++;                                    // TODO same lock — read/add/store is one step
         peak = Math.max(peak, count);
+        // TODO after the item is in, signal notEmpty so a parked take() can proceed,
+        //      then release the lock in a finally block.
     }
 
+    /*
+     * Must guarantee: it never returns until it has an item, and the item it
+     * returns is handed to exactly one caller. A bounded queue's take() has no
+     * "nothing there" answer — returning null on empty is the defect, not a
+     * convenience.
+     */
     @Override
     @SuppressWarnings("unchecked")
     public T take() throws InterruptedException {
-        // TODO broken: returns null when empty instead of blocking
-        T item = (T) items[head];
+        // WRONG: on an empty queue this reads a null slot and still advances head, so the
+        // caller gets null and the queue's bookkeeping drifts. With two consumers, both can
+        // read the same head slot and the item comes back twice.
+        // TODO acquire the lock, then wait in a `while (count == 0)` loop on a notEmpty
+        //      condition — a `while`, not an `if`: another consumer may take the item first.
+        T item = (T) items[head];                   // TODO must run while holding the lock
         items[head] = null;
-        head = (head + 1) % items.length;
-        count--;
+        head = (head + 1) % items.length;           // TODO same lock — advance once per item
+        count--;                                    // TODO same lock — one step, like count++
+        // TODO before returning, signal notFull so a parked put() can use the slot you freed,
+        //      and release the lock in a finally block.
         return item;
     }
 
+    /*
+     * Reads shared state written by put()/take(); must be read under the same
+     * lock.
+     */
     @Override
     public int size() {
+        // TODO read count under the lock, so callers never see a half-updated value.
         return count;
     }
 
+    /*
+     * The high-water mark the checker uses to prove put() really blocked at
+     * capacity.
+     */
     @Override
     public int peakSize() {
+        // TODO read peak under the lock, for the same reason as size().
         return peak;
     }
 
@@ -106,9 +158,14 @@ public final class Ex07Queue<T> implements BoundedQueue<T> {
     private static final int TOTAL_ITEMS = PRODUCERS * PER_PRODUCER;
     private static final long JOIN_TIMEOUT_MILLIS = 5_000;
 
-    /** How long the parked-taker check watches before it measures. */
+    /*
+     * How long the parked-taker check watches before it measures.
+     */
     private static final long PARKED_OBSERVATION_MILLIS = 1_000;
-    /** CPU a genuinely parked thread may burn over that window. A spinner burns ~all of it. */
+    /*
+     * CPU a genuinely parked thread may burn over that window. A spinner burns
+     * ~all of it.
+     */
     private static final long PARKED_CPU_BUDGET_MILLIS = 200;
 
     public static void main(String[] args) {
@@ -126,10 +183,10 @@ public final class Ex07Queue<T> implements BoundedQueue<T> {
         System.exit(check.finish());
     }
 
-    /**
-     * The throughput check: capacity {@value #CAPACITY} against
-     * {@value #TOTAL_ITEMS} items, so the queue spends the whole run at one
-     * boundary or the other and both waits get exercised thousands of times.
+    /*
+     * The throughput check: capacity CAPACITY against TOTAL_ITEMS items, so
+     * the queue spends the whole run at one boundary or the other and both
+     * waits get exercised thousands of times.
      */
     private static void handOffEveryItem() throws Exception {
         BoundedQueue<Integer> queue = new Ex07Queue<>(CAPACITY);
@@ -208,11 +265,11 @@ public final class Ex07Queue<T> implements BoundedQueue<T> {
                 received.size() - distinct.size());
     }
 
-    /**
-     * The check a spin-wait fails. A correct {@code take()} parks and burns no
-     * CPU; a {@code while (isEmpty()) {}} loop is functionally right and costs a
-     * core per blocked thread, which is the kind of bug that surfaces as a cloud
-     * bill rather than an exception.
+    /*
+     * The check a spin-wait fails. A correct take() parks and burns no CPU; a
+     * while (isEmpty()) {} loop is functionally right and costs a core per
+     * blocked thread, which is the kind of bug that surfaces as a cloud bill
+     * rather than an exception.
      */
     private static void takeParksWhenEmpty() throws Exception {
         ThreadMXBean threadMx = ManagementFactory.getThreadMXBean();
@@ -263,7 +320,9 @@ public final class Ex07Queue<T> implements BoundedQueue<T> {
                 + "busy-wait loop.", cpuMillis.get(), PARKED_OBSERVATION_MILLIS);
     }
 
-    /** The other half: a full queue must push back, not quietly overwrite. */
+    /*
+     * The other half: a full queue must push back, not quietly overwrite.
+     */
     private static void putBlocksWhenFull() throws Exception {
         BoundedQueue<Integer> queue = new Ex07Queue<>(2);
         queue.put(1);
@@ -299,7 +358,10 @@ public final class Ex07Queue<T> implements BoundedQueue<T> {
         Check.equal(queue.size(), 2, "the blocked put() did not land after the take()");
     }
 
-    /** All daemon, all joined with a timeout: this checker reports hangs, it does not have them. */
+    /*
+     * All daemon, all joined with a timeout: this checker reports hangs, it
+     * does not have them.
+     */
     private static Thread start(String name, Body body) {
         Thread thread = new Thread(() -> {
             try {

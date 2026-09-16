@@ -6,33 +6,59 @@ import com.locallearn.concurrency.support.Stress;
 
 import java.lang.management.ManagementFactory;
 
-/**
- * <b>EXERCISE 5 — transfer money without deadlocking.</b> See {@code t04locks.D11_Deadlock}.
+/*
+ * EXERCISE 5 — move money between accounts without deadlocking
  *
- * <p>The test runs many threads transferring in both directions between the
- * same accounts. As written it deadlocks within milliseconds, and the test
- * fails on a timeout.
+ * THE SCENARIO
+ *   A ledger with one balance and one lock per account. Request threads call
+ *   transfer(int, int, long) constantly, in every direction: the same pair of
+ *   accounts is being debited one way and credited the other way at the same
+ *   moment. Each transfer must move the money as one step — no observer may
+ *   ever see it gone from one account and not yet in the other.
  *
- * <p>Two things must hold when it finishes: no deadlock, and
- * {@link #totalMoney()} unchanged — money is neither created nor destroyed.
- * Note that simply removing the locks fixes the deadlock and breaks the
- * second property, so you cannot cheat your way past this one.
+ * WHAT IS WRONG RIGHT NOW
+ *   The lock order is taken from the argument order. transfer(1, 2, …) takes
+ *   locks[1] then locks[2]; transfer(2, 1, …) takes them in the opposite order.
+ *   Run both at once and each thread ends up holding the lock the other one is
+ *   waiting for. Neither can make progress and neither ever times out — this is
+ *   a circular wait, and it happens within milliseconds under the checker's
+ *   load.
  *
- * <p>Hint: the bug is not "two locks". It is "two locks acquired in two
- * different orders". Fix the order, or stop holding one while waiting for
- * the other.
+ * YOUR TASK
+ *   1. transfer(int, int, long) — acquire the two account locks in an order
+ *      that does not depend on which argument is "from" and which is "to" (for
+ *      example, always the lower account index first), while both balance
+ *      updates still happen with both locks held.
  *
- * <p>This is the first exercise that fails by <em>stopping</em> rather than by
- * printing a wrong number, so the checker below asks the JVM what it sees when
- * a trial runs out of time — {@code ThreadMXBean.findDeadlockedThreads()}, the
- * same call D11 demonstrates. Learn to reach for it: it is what you have in
- * production when a service goes quiet instead of erroring.
+ * RULES
+ *   Deleting the locks removes the deadlock and fails the money check instead,
+ *   so that shortcut is closed. Do not change the signatures, and leave
+ *   balance(int) and totalMoney() as they are — they are already correct. Watch
+ *   the self-transfer case if your fix locks the same monitor twice.
  *
- * <pre>
- * ./mvnw -q compile
- * java -cp target/classes com.locallearn.concurrency.exercises.Ex05Bank   # fast loop
- * ./mvnw test -Dtest='ExerciseTests$Ex5'                                  # the grade
- * </pre>
+ * DONE WHEN
+ *   Running this file prints all PASS and exits 0. The checks are:
+ *   1. 10 trials of 16 threads x 2,000 two-way transfers each finish inside a
+ *      4-second budget — no deadlock;
+ *   2. totalMoney() is still accounts x initial balance afterwards — no money
+ *      created or destroyed;
+ *   3. one isolated transfer debits and credits the right amounts.
+ *
+ * HOW TO RUN
+ *   Press Run in VS Code (Code Runner, Ctrl/Cmd+Alt+N) with this file open, or:
+ *     cd concurrency-lab
+ *     ./run.sh Ex05Bank
+ *
+ * HINT
+ *   The bug is not "two locks". It is "two locks acquired in two different
+ *   orders". Impose a global order on the locks, or stop holding one while
+ *   waiting for the other. When a trial times out the checker asks the JVM what
+ *   it sees, via ThreadMXBean.findDeadlockedThreads() — that call is what you
+ *   have in production when a service goes quiet instead of erroring.
+ *
+ * SEE ALSO
+ *   Demo t04locks.D11_Deadlock shows the failure live. Reference solution:
+ *   solutions/Solutions.java.
  */
 public final class Ex05Bank implements Bank {
 
@@ -48,10 +74,20 @@ public final class Ex05Bank implements Bank {
         }
     }
 
+    /*
+     * Must guarantee that the debit and the credit happen together, under both
+     * account locks, and that two transfers between the same pair of accounts
+     * can never block each other forever. Lose the first and money appears or
+     * vanishes; lose the second and the whole service stops answering with no
+     * exception anywhere to explain it.
+     */
     @Override
     public void transfer(int fromAccount, int toAccount, long amount) {
-        // TODO broken: lock order depends on the arguments, so transfer(1,2)
-        // racing transfer(2,1) produces a circular wait.
+        // WRONG: these two lines lock in argument order. transfer(1,2) grabs locks[1]
+        // then waits for locks[2] while transfer(2,1) holds locks[2] and waits for
+        // locks[1] — a circular wait that neither thread ever leaves.
+        // TODO lock the two accounts in a fixed global order (e.g. lower index first)
+        // instead of "from" then "to", keeping both updates inside both locks.
         synchronized (locks[fromAccount]) {
             synchronized (locks[toAccount]) {
                 balances[fromAccount] -= amount;
@@ -134,11 +170,11 @@ public final class Ex05Bank implements Bank {
         System.exit(check.finish());
     }
 
-    /**
+    /*
      * Asks the JVM whether it can see the deadlock, and puts the answer in the
-     * failure message. Same {@code ThreadMXBean} call as D11 — worth knowing by
-     * heart, because it is the fastest way to turn "the service is hung" into
-     * "these two threads are waiting on each other".
+     * failure message. Same ThreadMXBean call as D11 — worth knowing by heart,
+     * because it is the fastest way to turn "the service is hung" into "these
+     * two threads are waiting on each other".
      */
     private static String deadlockReport() {
         long[] deadlocked = ManagementFactory.getThreadMXBean().findDeadlockedThreads();

@@ -17,78 +17,132 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
-/**
- * <b>EXERCISE 14 — two workloads, one runner, and no single strategy that fits
- * both.</b> Demo: {@code t09parallel.D27_VirtualThreadsAndPinning}.
+/*
+ * EXERCISE 14 — one runner, two kinds of work
  *
- * <p>Everything below is written the way a reasonable person writes it the
- * first time: one executor, sized to the core count, shared by both methods,
- * with a lock to keep the shared result list safe. Every individual decision
- * is defensible. Together they are wrong, and the tests will tell you which
- * workload each decision ruins.
+ * THE SCENARIO
+ *   A batch runner used by two very different callers. runCpuBound is handed
+ *   tasks that compute — they need a core each and there is no point running
+ *   more of them than the machine has cores. runIoBound is handed tasks that
+ *   mostly wait on a network call or a database — hundreds should be in flight
+ *   at once, because a waiting task needs no core at all. Both return their
+ *   results in submission order.
  *
- * <p>Two planted defects:
- * <ol>
- *   <li><b>One strategy for two kinds of work.</b> A pool of {@code cores}
- *       platform threads is right for CPU-bound work and catastrophic for
- *       IO-bound work: 400 tasks that each block for 100 ms can only run
- *       {@code cores} at a time. D27 measured this exact shape — a
- *       cores-sized pool managed ~120 blocking tasks per second where
- *       virtual threads managed ~68,000.</li>
- *   <li><b>The lock is held across the task itself.</b> {@code synchronized}
- *       around {@code task.call()} serialises every task, so neither
- *       workload gets any parallelism at all. And once you switch the IO path
- *       to virtual threads it gets a second, subtler penalty: a virtual
- *       thread that blocks inside {@code synchronized} is <b>pinned</b> to
- *       its carrier and cannot unmount. D27 measured a <b>108x</b> collapse
- *       from pinning alone, with zero contention.</li>
- * </ol>
+ * WHAT IS WRONG RIGHT NOW
+ *   Both methods funnel into one private runAll, and that single path makes two
+ *   decisions that suit neither caller:
+ *   1. One ExecutorService, a fixed pool of CORES platform threads, serves
+ *      both. That sizing is right for computing and catastrophic for waiting:
+ *      200 tasks that each block for 50 ms can only be in flight CORES at a
+ *      time, so the run takes 200 x 50 / CORES ms instead of about 50 ms.
+ *   2. synchronized (lock) wraps task.call() itself, so only one task in the
+ *      whole runner executes at a time. The CPU path gets no parallelism at
+ *      all, and if you move the IO path to virtual threads it gets a second
+ *      penalty: a virtual thread that blocks inside synchronized is PINNED to
+ *      its carrier and cannot unmount, so the carriers run out anyway.
  *
- * <p>Your job is to ask "what kind of work is this?" separately for each
- * method, and to make sure that whatever synchronisation survives does not
- * wrap a blocking call. Hint: the lock exists only to protect a list. There
- * are ways to collect results in order that need no lock at all.
+ * YOUR TASK
+ *   1. runCpuBound(List) — run on threads sized to the core count, all tasks
+ *      genuinely in parallel.
+ *   2. runIoBound(List) — run on an execution strategy where hundreds of
+ *      blocked tasks cost nothing, so they are all in flight at once.
+ *   3. runAll(List) — collect the results without holding anything across
+ *      task.call(). If both methods keep sharing this helper, it has to take
+ *      its executor from the caller rather than owning one.
+ *   4. close() — must still shut down whatever executors you end up owning.
  *
- * <p>Note what the checker below measures for the IO case: not wall time but
- * <em>how many tasks were in flight at once</em>. Wall time can be met by a
- * fast machine while the design is still wrong; the count of simultaneously
- * blocked tasks names the property you are actually being asked for.
+ * RULES
+ *   1. Both methods must return every result in submission order — a fast
+ *      runner that shuffles results has not solved anything.
+ *   2. Nothing may be held across task.call(). Not a monitor, not a lock.
+ *   3. Do not change the WorkloadRunner signatures.
  *
- * <pre>
- * ./mvnw -q compile
- * java -cp target/classes com.locallearn.concurrency.exercises.Ex14Runner   # fast loop
- * ./mvnw test -Dtest='ExerciseTests$Ex14'                                   # the grade
- * </pre>
+ * DONE WHEN
+ *   Running this file prints all PASS and exits 0. The three checks are:
+ *   1. both methods return all 64 results, correct and in submission order;
+ *   2. the CPU batch finishes at least 3x faster than the same work run
+ *      sequentially on this machine, measured right now so a slow box cannot
+ *      skew it;
+ *   3. more than a quarter of the 200 blocking tasks are in flight
+ *      simultaneously, and the whole IO batch fits inside a 2-second budget.
+ *
+ * HOW TO RUN
+ *   Press Run in VS Code (Code Runner, Ctrl/Cmd+Alt+N) with this file open, or:
+ *     cd concurrency-lab
+ *     ./run.sh Ex14Runner
+ *
+ * HINT
+ *   The lock exists only to protect a list. There are ways to collect results
+ *   in order — index into a pre-sized array, or just read the futures back in
+ *   submission order — that need no lock at all.
+ *   The IO check measures how many tasks were in flight at once, not wall time:
+ *   a fast machine can meet a deadline while the design is still wrong, and the
+ *   in-flight count names the property you are actually being asked for.
+ *
+ * SEE ALSO
+ *   Demo t09parallel.D27_VirtualThreadsAndPinning measured both effects: a
+ *   cores-sized pool managed ~120 blocking tasks per second where virtual
+ *   threads managed ~68,000, and pinning alone cost 108x with zero contention.
+ *   Reference solution: solutions/Solutions.java.
  */
 public final class Ex14Runner implements WorkloadRunner {
 
     private static final int CORES = Runtime.getRuntime().availableProcessors();
 
-    // TODO broken (defect 1): ONE executor for two completely different
-    // kinds of work. Sized for CPU-bound work, which makes it the wrong
-    // shape for anything that blocks.
+    // WRONG: one executor for two kinds of work. CORES platform threads is the right
+    // shape for tasks that compute and the wrong shape for tasks that wait — a waiting
+    // task needs no core, but here it occupies one of only CORES slots.
+    // TODO give each workload its own execution strategy: a cores-sized pool for the
+    // CPU path, and for the IO path something where a blocked task holds no OS thread
+    // (one virtual thread per task). Whatever you create here, close() must shut down.
     private final ExecutorService executor = Executors.newFixedThreadPool(CORES);
 
     private final Object lock = new Object();
 
+    /*
+     * Compute-bound tasks: each one needs a core, so the useful number in
+     * flight is about the core count. Must run them genuinely in parallel —
+     * the check compares against the same work measured sequentially on this
+     * machine.
+     */
     @Override
     public List<Long> runCpuBound(List<Callable<Long>> tasks) throws Exception {
+        // TODO run these on a pool sized to the core count. (This call is correct once
+        // runAll no longer serialises tasks and no longer picks the executor itself.)
         return runAll(tasks);
     }
 
+    /*
+     * Blocking tasks: each one spends its life waiting, so hundreds should be
+     * in flight at once. If this path is capped at the core count, 200 tasks x
+     * 50 ms of pure waiting takes seconds instead of about 50 ms.
+     */
     @Override
     public List<Long> runIoBound(List<Callable<Long>> tasks) throws Exception {
-        return runAll(tasks);                   // TODO broken: same executor, both workloads
+        // WRONG: same cores-sized platform pool as the CPU path, so only CORES of these
+        // tasks can be waiting at any moment.
+        // TODO route this workload to one virtual thread per task, so a blocked task
+        // unmounts its carrier and costs nothing while it waits (D27).
+        return runAll(tasks);
     }
 
+    /*
+     * The shared submit-and-collect loop. It must preserve submission order in
+     * the returned list and must hold nothing while a task runs — anything
+     * held across task.call() makes the whole runner single-threaded.
+     */
     private List<Long> runAll(List<Callable<Long>> tasks) throws Exception {
         List<Future<Long>> futures = new ArrayList<>();
         for (Callable<Long> task : tasks) {
             futures.add(executor.submit(() -> {
-                // TODO broken (defect 2): the lock is held across the whole
-                // task, including whatever blocking it does. This serialises
-                // every task, and on a virtual thread it also PINS the
-                // carrier for the duration of the blocking call (D27).
+                // WRONG: the monitor is held across task.call(), including whatever
+                // blocking the task does, so exactly one task runs at a time no matter
+                // how many threads exist. On a virtual thread it is worse: blocking
+                // inside synchronized PINS the thread to its carrier so it cannot
+                // unmount, which D27 measured as a 108x collapse with no contention.
+                // TODO remove the mutual exclusion from around the call entirely. The
+                // lock only ever guarded a list, and the loop below already restores
+                // submission order without it.
                 synchronized (lock) {
                     return task.call();
                 }
@@ -112,26 +166,31 @@ public final class Ex14Runner implements WorkloadRunner {
 
     private static final int MACHINE_CORES = Runtime.getRuntime().availableProcessors();
 
-    /** Correctness sample: small, so a broken runner still finishes it. */
+    /*
+     * Correctness sample: small, so a broken runner still finishes it.
+     */
     private static final int ORDER_TASKS = 64;
 
-    /** CPU sample, sized like the JUnit contract's: enough work to time honestly. */
+    /*
+     * CPU sample, sized like the JUnit contract's: enough work to time
+     * honestly.
+     */
     private static final int CPU_TASKS = Math.max(16, MACHINE_CORES * 4);
     private static final int CPU_ITERATIONS = 2_000_000;
 
-    /**
-     * IO sample. Smaller than the contract's 400 x 100 ms, because a serialised
-     * runner would take {@code tasks x millis} to finish it and this main is
-     * meant to answer in seconds. The property asserted is the same one.
+    /*
+     * IO sample. Smaller than the contract's 400 x 100 ms, because a
+     * serialised runner would take tasks x millis to finish it and this main
+     * is meant to answer in seconds. The property asserted is the same one.
      */
     private static final int IO_TASKS = 200;
     private static final long IO_BLOCK_MILLIS = 50;
 
-    /**
+    /*
      * How long the checker waits for one IO run before calling it a failure.
-     * Serialised, those tasks need {@code 200 x 50 ms = 10s}; one virtual
-     * thread per task needs about 50 ms. Two seconds cannot be reached by
-     * accident from either side.
+     * Serialised, those tasks need 200 x 50 ms = 10s; one virtual thread per
+     * task needs about 50 ms. Two seconds cannot be reached by accident from
+     * either side.
      */
     private static final long IO_BUDGET_MILLIS = 2_000;
 
@@ -252,14 +311,13 @@ public final class Ex14Runner implements WorkloadRunner {
 
     // ── checker helpers ────────────────────────────────────────────────────
 
-    /**
-     * Runs one workload on a daemon thread and gives up after
-     * {@code budgetMillis}, reporting {@code diagnosis} as the failure.
-     *
-     * <p>Both defects here degrade into "takes a very long time" rather than
-     * "throws", and a checker that simply waits would become the hang it is
-     * supposed to report. The thread is a daemon so that giving up is enough:
-     * the JVM can exit with tasks still sleeping on it.
+    /*
+     * Runs one workload on a daemon thread and gives up after budgetMillis,
+     * reporting diagnosis as the failure. Both defects here degrade into
+     * "takes a very long time" rather than "throws", and a checker that simply
+     * waits would become the hang it is supposed to report. The thread is a
+     * daemon so that giving up is enough: the JVM can exit with tasks still
+     * sleeping on it.
      */
     private static List<Long> within(long budgetMillis, Callable<List<Long>> call,
                                      Supplier<String> diagnosis) throws Exception {
@@ -317,7 +375,9 @@ public final class Ex14Runner implements WorkloadRunner {
 
     private static final AtomicLong SINK = new AtomicLong();
 
-    /** Genuine CPU work: a serial dependency chain the JIT cannot elide. */
+    /*
+     * Genuine CPU work: a serial dependency chain the JIT cannot elide.
+     */
     private static long spin(int seed, int iterations) {
         long x = 0x9E3779B97F4A7C15L ^ seed;
         for (int i = 0; i < iterations; i++) {

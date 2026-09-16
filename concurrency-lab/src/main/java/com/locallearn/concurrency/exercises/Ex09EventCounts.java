@@ -8,78 +8,126 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
-/**
- * <b>EXERCISE 9 — make the compound updates atomic.</b> See
- * {@code t06shared.D17_AtomicMapUpdates}.
+/*
+ * EXERCISE 9 — one atomic call per update, not two
  *
- * <p><b>Read the field declaration first.</b> The map is already a
- * {@code ConcurrentHashMap}. Every single call below is atomic and
- * thread-safe, and this class is still broken — which is the entire lesson
- * of topic 6, and the reason the starting code is not a {@code HashMap}.
+ * THE SCENARIO
+ *   A tally of events keyed by name, the shape you find behind a metrics
+ *   counter or a work-claim ledger. Many threads call record(key) as events
+ *   arrive, and many threads call consume(key) to claim one occurrence each — a
+ *   key consumed down to zero must disappear from the map entirely.
  *
- * <p>{@code record} is {@code get}-then-{@code put}: two atomic calls with a
- * race-shaped hole between them. That is {@code count++} from D7 wearing a
- * Map's clothes, and it loses increments at the same rate. {@code consume}
- * is worse — it is {@code containsKey}-then-act, so two callers can both see
- * a count of 1 and both claim the same single occurrence. You have now met
- * this shape in D8 (overselling), Ex6 (the cache stampede) and D17.
+ * WHAT IS WRONG RIGHT NOW
+ *   Read the field declaration first: the map is already a ConcurrentHashMap,
+ *   so every individual call below is atomic and thread-safe, and this class is
+ *   still broken. That is the whole lesson. record is get then put — two atomic
+ *   calls with a gap between them, so two threads both read 7 and both write 8,
+ *   losing an event. consume is worse: it is check-then-act, so two threads
+ *   both read a count of 1, both return true, and the same single occurrence is
+ *   claimed twice.
  *
- * <p>The fix is not "use a thread-safe map" — you already have one. It is
- * <b>express each whole read-modify-write as one call</b>, so the map holds
- * the bin lock across the read and the write together:
- * <ul>
- *   <li>{@code merge(key, 1L, Long::sum)} for the increment;</li>
- *   <li>{@code compute(key, (k, v) -> ...)} for the decrement — and note
- *       that <b>returning null from compute removes the entry</b>, which is
- *       exactly how you satisfy "a key consumed to zero must disappear"
- *       atomically rather than with a second {@code remove} call that would
- *       reopen the same gap.</li>
- * </ul>
+ * YOUR TASK
+ *   1. record(String) — replace the get/put pair with one call that increments
+ *      under the map's bin lock.
+ *   2. consume(String) — replace the get/branch/put-or-remove sequence with one
+ *      call that decides, decrements, and removes-at-zero in a single step, and
+ *      still reports whether it took an occurrence.
  *
- * <p>Careful with {@code consume}: it has to report whether it actually
- * consumed something, and the mapping function cannot return that to you.
- * Capture it from inside the function — an effectively-final one-element
- * array or an {@code AtomicBoolean} — and read it after {@code compute}
- * returns. The mapping function runs exactly once per successful call, under
- * the bin lock, so what it records is accurate.
+ * RULES
+ *   1. Do not swap the map for a different type and do not wrap the methods in
+ *      synchronized — the map you need is already there.
+ *   2. Removing a zeroed key with a separate remove() call reopens the gap you
+ *      just closed; the removal has to happen inside the same atomic step.
+ *   3. Counts must never go negative, and consume on an absent key returns
+ *      false.
  *
- * <pre>
- * ./mvnw -q compile
- * java -cp target/classes com.locallearn.concurrency.exercises.Ex09EventCounts   # fast loop
- * ./mvnw test -Dtest='ExerciseTests$Ex9'                                         # the grade
- * </pre>
+ * DONE WHEN
+ *   Running this file prints all PASS and exits 0. The checks are:
+ *   1. 16 threads x 2,000 records over 50 keys, 10 trials — nothing lost.
+ *   2. Twice as many consumers as occurrences, 10 trials — consume() returns
+ *      true exactly as many times as there were occurrences, every count lands
+ *      on zero, and no keys remain.
+ *   3. A single-threaded walk through record/consume/remove, to catch a fix
+ *      that is atomic and also wrong.
+ *
+ * HOW TO RUN
+ *   Press Run in VS Code (Code Runner, Ctrl/Cmd+Alt+N) with this file open, or:
+ *     cd concurrency-lab
+ *     ./run.sh Ex09EventCounts
+ *
+ * HINT
+ *   merge(key, 1L, Long::sum) for the increment. compute(key, (k, v) -> ...)
+ *   for the decrement — and returning null from compute removes the entry,
+ *   which is how "consumed to zero must disappear" happens atomically.
+ *   compute's mapping function cannot hand you a boolean, so capture the
+ *   outcome from inside it (an AtomicBoolean, or a one-element array) and read
+ *   it after compute returns; the function runs once per call, under the bin
+ *   lock, so what it records is accurate.
+ *
+ * SEE ALSO
+ *   Demo t06shared.D17_AtomicMapUpdates shows the failure live. You have met
+ *   this same check-then-act shape in D8 (overselling) and Ex6 (the cache
+ *   stampede). Reference solution: solutions/Solutions.java.
  */
 public final class Ex09EventCounts implements EventCounts {
 
-    // Already thread-safe. Already not enough.
+    // Already thread-safe. Already not enough: atomic calls do not compose into an atomic
+    // sequence. The lock this map holds is released between one call and the next.
     private final Map<String, Long> counts = new ConcurrentHashMap<>();
 
+    /*
+     * Must guarantee: after N calls with the same key, the count is exactly N.
+     * If the read and the write are separate, two threads read the same value
+     * and the second write overwrites the first — the event is accepted and
+     * never counted.
+     */
     @Override
     public void record(String key) {
-        Long current = counts.get(key);                     // TODO broken: READ...
-        counts.put(key, current == null ? 1L : current + 1); // TODO broken: ...and WRITE, separately
+        // WRONG: get() and put() are each atomic, but another thread can record the same key
+        // in the gap between them. Its increment is then overwritten by the put() below.
+        // TODO collapse these two lines into ONE map call that increments under the bin lock.
+        Long current = counts.get(key);                     // TODO the READ...
+        counts.put(key, current == null ? 1L : current + 1); // TODO ...and the WRITE: one step
     }
 
+    /*
+     * Must guarantee: across all threads, consume returns true exactly as many
+     * times as record was called. Each true is a claim on one real occurrence,
+     * so a duplicated true is work done twice on the same event.
+     */
     @Override
     public boolean consume(String key) {
-        Long current = counts.get(key);                     // TODO broken: CHECK...
+        // WRONG: the count is read here and acted on three lines later. Two threads can both
+        // read 1, both take the remove() branch, and both return true — the same occurrence
+        // claimed twice. This is D8's overselling bug in a Map.
+        // TODO do the read, the decision, the decrement and the removal in ONE map call, and
+        //      capture the true/false outcome from inside the mapping function.
+        Long current = counts.get(key);                     // TODO the CHECK...
         if (current == null || current <= 0) {
             return false;
         }
         if (current == 1) {
-            counts.remove(key);                             // TODO broken: ...and ACT, separately —
-        } else {                                            //     two callers can both get here
-            counts.put(key, current - 1);
+            counts.remove(key);                             // TODO ...and the ACT: a lone
+        } else {                                            //      remove() reopens the gap
+            counts.put(key, current - 1);                   // TODO same gap: can clobber
         }
         return true;
     }
 
+    /*
+     * A point-in-time read. Correct as-is: one atomic get, nothing compound
+     * about it.
+     */
     @Override
     public long count(String key) {
         Long value = counts.get(key);
         return value == null ? 0L : value;
     }
 
+    /*
+     * Correct as-is — but it only reports zero keys if consume() removes them
+     * atomically.
+     */
     @Override
     public int distinctKeys() {
         return counts.size();

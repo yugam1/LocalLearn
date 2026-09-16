@@ -6,27 +6,56 @@ import com.locallearn.concurrency.api.Contracts.Counter;
 import com.locallearn.concurrency.support.Check;
 import com.locallearn.concurrency.support.Stress;
 
-/**
- * <b>EXERCISE 1 — fix the lost updates.</b> Demo: {@code t03atomicity.D7_LostUpdates}.
+/*
+ * EXERCISE 1 — a counter that loses increments
  *
- * <p>{@code value++} is read-modify-write: three steps (load, add, store) that
- * another thread can interleave with. Two threads read 41, both store 42, and
- * one increment vanished. Make the increment atomic.
+ * THE SCENARIO
+ *   A request counter inside a service. Every handler thread calls increment()
+ *   once per request; a metrics endpoint calls count() to publish the total.
+ *   Eight threads hit it at once, and the number it reports is the number
+ *   people alert on and bill from.
  *
- * <p>Hint: there are three valid answers here ({@code AtomicLong},
- * {@code synchronized}, {@code LongAdder}). Try all three — then look at D9's
- * benchmark and decide which you would actually ship for a metrics counter, and
- * which for an ID generator.
+ * WHAT IS WRONG RIGHT NOW
+ *   Nothing as the file stands: the code below is your own fix and the checks
+ *   pass. The defect this exercise is built around is a plain long value;
+ *   value++;. That one line is three machine steps — load, add, store — and
+ *   another thread can run between any two of them. Two threads load 41, both
+ *   add one, both store 42, and one request is missing from the total. Nothing
+ *   throws; the count is quietly low, and lower the busier the service gets.
  *
- * <p>Note that {@code volatile} is <em>not</em> one of the three. D7 shows a
- * volatile counter losing updates just as badly as a plain one; if that still
- * feels surprising, run D7 before you start.
+ * YOUR TASK
+ *   1. increment() — make load/add/store one indivisible step, so no second
+ *      thread can slip between the read and the write.
+ *   2. count() — return the total of every increment that has finished, not a
+ *      stale copy a reader thread cached earlier.
  *
- * <pre>
- * ./mvnw -q compile
- * java -cp target/classes com.locallearn.concurrency.exercises.Ex01Counter   # fast loop
- * ./mvnw test -Dtest='ExerciseTests$Ex1'                                     # the grade
- * </pre>
+ * RULES
+ *   volatile is not one of the answers. It makes each read and each write
+ *   visible, but it does not join the three steps of value++ into one, so a
+ *   volatile counter loses updates just as badly as a plain one. D7 shows that
+ *   live.
+ *
+ * DONE WHEN
+ *   Running this file prints all PASS and exits 0. The checks are:
+ *   1. 8 threads x 100,000 increments, 10 trials, land on exactly 800,000 every
+ *      time — one trial can get lucky, ten do not;
+ *   2. 1,000 increments on a single thread still read back as 1,000 — this
+ *      catches a fix that is atomic and also wrong, e.g. counting by the wrong
+ *      amount.
+ *
+ * HOW TO RUN
+ *   Press Run in VS Code (Code Runner, Ctrl/Cmd+Alt+N) with this file open, or:
+ *     cd concurrency-lab
+ *     ./run.sh Ex01Counter
+ *
+ * HINT
+ *   Three implementations are correct here: AtomicLong, synchronized, and
+ *   LongAdder. Try all three, then read D9's benchmark and decide which one you
+ *   would ship for a metrics counter and which for an ID generator.
+ *
+ * SEE ALSO
+ *   Demo t03atomicity.D7_LostUpdates shows the failure live. Reference
+ *   solution: solutions/Solutions.java.
  */
 public final class Ex01Counter implements Counter {
 
@@ -36,14 +65,25 @@ public final class Ex01Counter implements Counter {
         value = new AtomicLong(0L);
     }
 
+    /*
+     * Must guarantee that every call adds exactly one to the total, no matter
+     * how many threads call it at the same moment. If the read, the add and
+     * the store can be interleaved by another thread, increments silently
+     * disappear under load.
+     */
     @Override
     public  void increment() {
-        value.incrementAndGet();             // TODO broken: not atomic
+        value.incrementAndGet();             // one indivisible read-add-store
     }
 
+    /*
+     * Must return a value that includes every increment already finished on
+     * any thread. A field a reader can cache would let this report a total
+     * from minutes ago.
+     */
     @Override
     public  long count() {
-        return (long)value.get();               // TODO broken: not safely published
+        return (long)value.get();               // volatile read: no stale copy
     }
 
     // ═══════════════════════════════════════════════════════════════════════

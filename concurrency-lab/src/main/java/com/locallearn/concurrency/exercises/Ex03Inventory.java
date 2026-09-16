@@ -6,47 +6,98 @@ import com.locallearn.concurrency.support.Stress;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
-/**
- * <b>EXERCISE 3 — stop the overselling.</b> Demo: {@code t03atomicity.D8_CheckThenActOversell}.
+/*
+ * EXERCISE 3 — an inventory that oversells
  *
- * <p>Classic check-then-act. Note the twist: {@code reserve} takes a
- * <em>quantity</em>, not a single unit, so {@code decrementAndGet()} is not
- * available as a shortcut — you need a real CAS loop or a lock.
+ * THE SCENARIO
+ *   The stock level for one product during a flash sale. Sixteen checkout
+ *   threads call reserve(quantity) at the same moment, and a true means those
+ *   units are now committed to that customer. Sell units that do not exist and
+ *   someone has to cancel a paid order by hand.
  *
- * <p>Hint: if you go the CAS route, remember to re-read <em>and re-check</em>
- * inside the loop. Reading once outside it recreates the same bug.
+ * WHAT IS WRONG RIGHT NOW
+ *   Nothing as the file stands: the code below is your own fix and the checks
+ *   pass. The defect this exercise is built around is the check-then-act pair
+ *   if (stock >= quantity) stock -= quantity;. Those are two separate steps.
+ *   Two threads both read a stock of 3, both pass the test for 3 units, and
+ *   both subtract: 6 units sold out of 3, and stock goes negative.
  *
- * <p>Worth knowing where this ends up: in a real service, neither fix is
- * enough. Two JVMs behind a load balancer each hold their own lock, so the
- * invariant has to move down to the database — {@code UPDATE ... WHERE stock >= ?}
- * is this same compare-and-set, one layer further out.
+ * YOUR TASK
+ *   1. reserve(int) — make the check and the subtraction one indivisible step,
+ *      so no second thread can pass the same check on the same units.
+ *   2. remaining() — must report the stock left after every reservation that
+ *      has already committed.
  *
- * <pre>
- * ./mvnw -q compile
- * java -cp target/classes com.locallearn.concurrency.exercises.Ex03Inventory   # fast loop
- * ./mvnw test -Dtest='ExerciseTests$Ex3'                                       # the grade
- * </pre>
+ * RULES
+ *   reserve takes a QUANTITY, not a single unit, so decrementAndGet() is not
+ *   available as a shortcut: it has to be a CAS loop or a lock. Refusing a
+ *   caller you could have served is allowed; returning true without committing
+ *   the units is not.
+ *
+ * DONE WHEN
+ *   Running this file prints all PASS and exits 0. The checks are:
+ *   1. 16 threads reserving single units, 200 trials, never sell past the
+ *      stock;
+ *   2. the same with quantity 3, which is where a fix that leans on
+ *      decrementAndGet() falls over;
+ *   3. units sold plus units remaining always equal the initial stock, so
+ *      nothing appears or vanishes;
+ *   4. uncontended, an oversized reservation is still refused — catching a fix
+ *      that is atomic and also wrong, e.g. one that stops refusing at all.
+ *
+ * HOW TO RUN
+ *   Press Run in VS Code (Code Runner, Ctrl/Cmd+Alt+N) with this file open, or:
+ *     cd concurrency-lab
+ *     ./run.sh Ex03Inventory
+ *
+ * HINT
+ *   On the CAS route, re-read AND re-check inside the loop; reading once
+ *   outside it rebuilds the same bug with extra steps. Worth knowing where this
+ *   ends up: in a real service neither fix is enough, because two JVMs behind a
+ *   load balancer each hold their own lock — the invariant has to move down to
+ *   the database, where UPDATE ... WHERE stock >= ? is this same compare-and-
+ *   set one layer out.
+ *
+ * SEE ALSO
+ *   Demo t03atomicity.D8_CheckThenActOversell shows the failure live. Reference
+ *   solution: solutions/Solutions.java.
  */
 public final class Ex03Inventory implements Inventory {
 
-    private int stock;
+    private AtomicInteger stock;
 
     public Ex03Inventory(int initialStock) {
-        this.stock = initialStock;
+        this.stock = new AtomicInteger(initialStock);
     }
 
+    /*
+     * Must never hand out units that are not there: a true return means the
+     * quantity was taken from the stock that was actually present at that
+     * instant. If the check and the subtraction can be split by another
+     * thread, two callers buy the same units and the order has to be cancelled
+     * by hand later.
+     */
     @Override
     public boolean reserve(int quantity) {
-        if (stock >= quantity) {    // TODO broken: CHECK...
-            stock -= quantity;      // TODO broken: ...and ACT are separate steps
-            return true;
+        int value = stock.get();
+        if (value >= quantity) {    // checked against the captured value above
+            // The CAS is the indivisible step: it commits only while stock is still
+            // `value`, so a reservation that raced with another one takes nothing.
+            // A lost race returns false here rather than retrying — safe (nothing is
+            // oversold), but it refuses a caller that a retry loop would have served.
+            return stock.compareAndSet(value,value- quantity);
         }
         return false;
     }
 
+    /*
+     * Must reflect every reservation that has already committed, and must
+     * never go negative — sold plus remaining is the initial stock at all
+     * times.
+     */
     @Override
     public int remaining() {
-        return stock;
+        return stock.get();
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -86,10 +137,10 @@ public final class Ex03Inventory implements Inventory {
         System.exit(check.finish());
     }
 
-    /**
-     * Hammers a fresh inventory from {@code THREADS} threads and checks the two
-     * things that must hold afterwards: nothing was sold twice, and nothing
-     * appeared or vanished.
+    /*
+     * Hammers a fresh inventory from THREADS threads and checks the two things
+     * that must hold afterwards: nothing was sold twice, and nothing appeared
+     * or vanished.
      */
     private static void assertNeverOversells(int initialStock, int attempts, int quantity) {
         // Trials, not one run: the window between the check and the act is a few

@@ -13,54 +13,87 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/**
- * <b>EXERCISE 13 — build a thread pool.</b> See {@code t08pools.D22_PoolGrowthOrder}
- * and {@code t08pools.D24_SizingLifecycleAndLostExceptions}.
+/*
+ * EXERCISE 13 — build a thread pool
  *
- * <p>This is the exercise the whole curriculum has been building toward, and
- * you already own every part of it: worker threads that park rather than
- * spin (Ex7), a bounded queue that applies backpressure (Ex7), and a
- * shutdown that drains instead of abandoning (Ex8's poison pill). What is
- * new is the <b>submission rule</b>, and it is the one thing almost everyone
- * gets backwards:
+ * THE SCENARIO
+ *   This is the executor sitting behind a service: callers hand it Runnables
+ *   from many threads, it runs them on a small set of worker threads, and it
+ *   must be shut down cleanly at the end. It is a hand-written
+ *   ThreadPoolExecutor with the same three knobs: core size, max size, and a
+ *   bounded queue.
  *
- * <pre>
- *   1. workers &lt; core?        -> start a worker for this task
- *   2. queue accepts the task? -> queue it            &lt;-- BEFORE growing
- *   3. workers &lt; max?         -> start a worker for this task
- *   4. otherwise               -> RejectedExecutionException
- * </pre>
+ * WHAT IS WRONG RIGHT NOW
+ *   The pool has four independent defects, and each one fails its own check:
+ *   1. execute applies the submission rule upside down. It starts a new worker
+ *      whenever workers.size() < maxPoolSize, so the pool runs to max threads
+ *      before a single task ever reaches the queue. The queue only gets used
+ *      once the pool is already at max — the queue is dead weight, and the pool
+ *      makes threads for load one queue slot would have absorbed.
+ *   2. The worker loop calls queue.poll(), which returns null immediately when
+ *      the queue is empty. An idle worker therefore loops as fast as the CPU
+ *      allows and burns a whole core doing nothing.
+ *   3. shutdownAndAwait sets stopped = true and joins. A worker checks that
+ *      flag between tasks, so tasks the pool had already accepted and queued
+ *      are abandoned instead of run. Worse, a worker parked in a blocking take
+ *      never re-reads the flag at all, so this shape also hangs.
+ *   4. shutdownNow returns List.of(). The tasks still sitting in the queue are
+ *      dropped without a trace, so the caller cannot count, log or requeue the
+ *      work that was lost.
  *
- * <p>Four planted defects, each its own failing test:
- * <ol>
- *   <li><b>The order is inverted.</b> {@link Ex13Pool#execute} grows the pool
- *       to {@code maxPoolSize} before it ever offers to the queue, so the
- *       queue is dead weight and the pool creates threads for load one queue
- *       slot would have absorbed (D22).</li>
- *   <li><b>Busy-wait.</b> Workers spin on {@code poll()} instead of parking
- *       in {@code take()}, burning a core each while idle (D14, Ex7, Ex8).</li>
- *   <li><b>Lossy graceful shutdown.</b> {@code shutdownAndAwait} flips a flag,
- *       so queued tasks are abandoned rather than drained (D15, D24).</li>
- *   <li><b>{@code shutdownNow} hides the damage.</b> It returns an empty list
- *       instead of the tasks it never started, so the caller cannot see,
- *       count or requeue what was lost (D24).</li>
- * </ol>
+ * YOUR TASK
+ *   1. execute(Runnable) — apply the submission rule in this order: (1) fewer
+ *      than corePoolSize workers, start one for this task; (2) otherwise try
+ *      the queue; (3) only if the queue REFUSES it and there are fewer than
+ *      maxPoolSize workers, start one; (4) otherwise throw
+ *      RejectedExecutionException.
+ *   2. addWorker(Runnable) — make the worker loop block waiting for the next
+ *      task instead of polling, and make it exit on whatever signal the two
+ *      shutdowns send.
+ *   3. shutdownAndAwait() — drain: run every task already accepted, then stop
+ *      each worker, then join them all before returning.
+ *   4. shutdownNow() — abandon: stop the workers and return the tasks that were
+ *      never started.
  *
- * <p>Hint for defect 3: you cannot use a poison pill <em>and</em> honour
- * {@code shutdownNow}'s interrupt in the same worker loop without deciding
- * what each one means. Write the two shutdowns as the two different verbs
- * they are — drain versus abandon.
+ * RULES
+ *   1. No busy-wait. An idle worker must consume essentially no CPU; a check
+ *      measures per-thread CPU time over an idle second.
+ *   2. A task that throws must not kill its worker — the pool keeps serving.
+ *   3. The two shutdowns are different verbs and must stay different:
+ *      shutdownAndAwait finishes the backlog, shutdownNow does not.
+ *   4. Keep worker threads named minipool-worker-*; the CPU check finds them by
+ *      that prefix.
  *
- * <p>Notice as you go how little of this is about running tasks. A pool that
- * runs every task you hand it can still be wrong in all four of these ways,
- * which is why most of the checks below measure the pool's <em>shape</em>
- * under load rather than its output.
+ * DONE WHEN
+ *   Running this file prints all PASS and exits 0. The six checks are:
+ *   1. with a roomy queue the pool never grows past corePoolSize;
+ *   2. the staircase: core fills, then the queue fills, then the pool grows to
+ *      max;
+ *   3. at max with a full queue, execute throws RejectedExecutionException;
+ *   4. shutdownAndAwait runs all 2,000 accepted tasks and leaves 0 workers
+ *      alive;
+ *   5. shutdownNow returns the hundreds of tasks it abandoned;
+ *   6. four idle workers burn near-zero CPU across a full second.
  *
- * <pre>
- * ./mvnw -q compile
- * java -cp target/classes com.locallearn.concurrency.exercises.Ex13Pool   # fast loop
- * ./mvnw test -Dtest='ExerciseTests$Ex13'                                 # the grade
- * </pre>
+ * HOW TO RUN
+ *   Press Run in VS Code (Code Runner, Ctrl/Cmd+Alt+N) with this file open, or:
+ *     cd concurrency-lab
+ *     ./run.sh Ex13Pool
+ *
+ * HINT
+ *   You cannot use a poison pill AND honour shutdownNow's interrupt in one
+ *   worker loop without deciding what each one means: a pill travels through
+ *   the FIFO and therefore arrives after every real task (that is the drain),
+ *   while an interrupt reaches a parked worker immediately (that is the
+ *   abandon).
+ *   Most of the checks measure the pool's SHAPE under load, not its output — a
+ *   pool that runs every task you hand it can still be wrong in all four ways.
+ *
+ * SEE ALSO
+ *   Demo t08pools.D22_PoolGrowthOrder shows the submission rule live, and
+ *   t08pools.D24_SizingLifecycleAndLostExceptions shows the two shutdowns. You
+ *   already built the parts: parking workers and a bounded queue in Ex7, the
+ *   poison-pill drain in Ex8. Reference solution: solutions/Solutions.java.
  */
 public final class Ex13Pool implements com.locallearn.concurrency.api.Contracts.MiniPool {
     private final int corePoolSize;
@@ -80,15 +113,25 @@ public final class Ex13Pool implements com.locallearn.concurrency.api.Contracts.
         this.queue = new java.util.concurrent.ArrayBlockingQueue<>(queueCapacity);
     }
 
+    /*
+     * Accepts a task, or refuses it. Must guarantee the submission rule: core
+     * -> QUEUE -> max -> reject. A task may only create a thread beyond
+     * corePoolSize when the queue has REFUSED it. Get the order wrong and the
+     * pool spends threads on load a queue slot would have absorbed, which is
+     * how a service ends up with hundreds of threads under a burst it could
+     * have buffered.
+     */
     @Override
     public void execute(Runnable task) {
         if (stopped) {
             throw new java.util.concurrent.RejectedExecutionException("pool is shut down");
         }
-        // TODO broken (defect 1): this grows the pool all the way to
-        // maxPoolSize BEFORE it ever tries the queue — the submission rule
-        // upside down. Result: the queue is never used while threads remain
-        // available, which is exactly backwards from ThreadPoolExecutor (D22).
+        // WRONG: this grows the pool all the way to maxPoolSize before it ever offers
+        // the task to the queue, so the queue is only reached once the pool is already
+        // at max — the submission rule upside down (D22).
+        // TODO rewrite these two blocks in the right order: start a worker only while
+        // workers.size() < corePoolSize; then offer to the queue; only when offer()
+        // returns false may you start a worker up to maxPoolSize; otherwise reject.
         synchronized (workers) {
             if (workers.size() < maxPoolSize) {
                 addWorker(task);
@@ -100,21 +143,32 @@ public final class Ex13Pool implements com.locallearn.concurrency.api.Contracts.
         }
     }
 
+    /*
+     * Starts one worker. The loop must guarantee two things: an idle worker
+     * consumes no CPU (it waits for a task rather than asking for one over and
+     * over), and it leaves the loop only when a shutdown says so. A worker
+     * that polls costs a core each while idle; a worker that only tests a flag
+     * cannot notice a shutdown while it is parked, and the join in
+     * shutdownAndAwait then waits forever.
+     */
     private void addWorker(Runnable firstTask) {
         Thread worker = new Thread(() -> {
             Runnable task = firstTask;
-            while (!stopped) {                  // TODO broken (defect 3): a flag stops
-                if (task != null) {             // workers wherever they are, abandoning
-                    try {                       // whatever is still queued
-                        task.run();
+            while (!stopped) {                  // WRONG: a volatile flag ends the loop
+                if (task != null) {             // wherever the worker is, so tasks still
+                    try {                       // queued are abandoned — and a parked
+                        task.run();             // worker never re-reads it at all.
                     } catch (RuntimeException e) {
                         // a pool must survive a failing task
                     }
                     completed.incrementAndGet();
                 }
-                task = queue.poll();            // TODO broken (defect 2): poll() returns
-                                                // null immediately, so an idle worker
-                                                // spins at 100% CPU (D14's verb grid)
+                // TODO block here until a task arrives (take()) instead of polling, and
+                // decide the exit condition with it: a poison pill read off the queue
+                // ends the drain, an interrupt ends the abandon.
+                task = queue.poll();            // WRONG: poll() returns null the instant
+                                                // the queue is empty, so an idle worker
+                                                // spins at 100% CPU (D14's verb grid).
             }
         }, "minipool-worker-" + workers.size());
         workers.add(worker);
@@ -122,23 +176,42 @@ public final class Ex13Pool implements com.locallearn.concurrency.api.Contracts.
         worker.start();
     }
 
+    /*
+     * The graceful shutdown: every task the pool ACCEPTED must still run, and
+     * every worker must be dead before this returns. If it merely asks workers
+     * to stop, queued work is silently lost — the caller was told the task was
+     * accepted.
+     */
     @Override
     public void shutdownAndAwait() throws InterruptedException {
-        stopped = true;                         // TODO broken (defect 3): "stop now",
-        for (Thread worker : workers) {         // not "finish the queue, then stop"
+        // WRONG: this says "stop now", not "finish the queue, then stop". Workers see
+        // the flag between tasks and exit with the backlog still queued; a worker that
+        // is parked waiting for work never sees it at all, so the join below hangs.
+        // TODO stop accepting new tasks, then send a signal that travels through the
+        // SAME FIFO as the tasks — one poison pill per worker — so each worker reaches
+        // it only after every real task, and only then join them.
+        stopped = true;
+        for (Thread worker : workers) {
             worker.join();
         }
     }
 
+    /*
+     * The abrupt shutdown: abandon the backlog, but REPORT it. Interrupting
+     * the workers is only half the contract; the tasks that will now never run
+     * have to come back to the caller, who is the only one who can requeue,
+     * log or count them. Returning an empty list turns lost work into
+     * invisible lost work.
+     */
     @Override
     public java.util.List<Runnable> shutdownNow() {
         stopped = true;
         for (Thread worker : workers) {
             worker.interrupt();
         }
-        // TODO broken (defect 4): the tasks still sitting in the queue are
-        // silently dropped. shutdownNow()'s whole contract is that it HANDS
-        // THEM BACK so the caller can count or requeue them (D24).
+        // WRONG: the tasks still sitting in the queue are dropped silently (D24).
+        // TODO drain the queue into a list and return that list — the tasks removed
+        // here are exactly the ones this shutdown is abandoning.
         return java.util.List.of();
     }
 
@@ -174,7 +247,10 @@ public final class Ex13Pool implements com.locallearn.concurrency.api.Contracts.
     //  Below here is the checker, not the exercise. You do not need to edit it.
     // ═══════════════════════════════════════════════════════════════════════
 
-    /** Only ever reached if a shutdown has hung, so it can afford to be generous. */
+    /*
+     * Only ever reached if a shutdown has hung, so it can afford to be
+     * generous.
+     */
     private static final long PATIENCE_MILLIS = 15_000;
 
     public static void main(String[] args) {
@@ -366,11 +442,11 @@ public final class Ex13Pool implements com.locallearn.concurrency.api.Contracts.
 
     // ── checker helpers ────────────────────────────────────────────────────
 
-    /**
-     * Drains on a daemon thread and refuses to wait forever. A graceful shutdown
-     * is exactly the place a pool hangs: a worker parked in {@code take()} never
-     * re-reads a volatile flag (topic 5, P3), so "ask them to stop, then join"
-     * waits for something that will never happen.
+    /*
+     * Drains on a daemon thread and refuses to wait forever. A graceful
+     * shutdown is exactly the place a pool hangs: a worker parked in take()
+     * never re-reads a volatile flag (topic 5, P3), so "ask them to stop, then
+     * join" waits for something that will never happen.
      */
     private static void shutdownAndAwaitWithin(MiniPool pool) throws InterruptedException {
         Thread closer = new Thread(() -> {
@@ -410,9 +486,9 @@ public final class Ex13Pool implements com.locallearn.concurrency.api.Contracts.
         return total;
     }
 
-    /**
-     * Best-effort cleanup. A failed check must not leave spinning workers behind
-     * to skew the CPU measurement of every check after it.
+    /*
+     * Best-effort cleanup. A failed check must not leave spinning workers
+     * behind to skew the CPU measurement of every check after it.
      */
     private static void quietShutdown(MiniPool pool) {
         try {

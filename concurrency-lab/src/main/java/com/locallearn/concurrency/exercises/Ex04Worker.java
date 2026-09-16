@@ -6,47 +6,89 @@ import com.locallearn.concurrency.support.Check;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/**
- * <b>EXERCISE 4 — make the worker cancellable.</b>
- * Demo: {@code t01threads.D3_InterruptionAndCancellation}.
+/*
+ * EXERCISE 4 — a background worker you can cancel
  *
- * <p>Two bugs in the code below, and they compound:
- * <ol>
- *   <li>The loop never checks the interrupt flag, so it cannot stop.</li>
- *   <li>The catch block swallows {@link InterruptedException} — it neither
- *       rethrows nor restores the flag — so the cancellation request is
- *       destroyed and nobody upstream can recover it.</li>
- * </ol>
+ * THE SCENARIO
+ *   This is a long-running background task inside a service: it loops forever
+ *   doing small units of work. On shutdown, or when a request is abandoned, the
+ *   owner of the thread calls thread.interrupt() and then waits for the worker
+ *   to exit and release what it was holding.
  *
- * <p>The test asserts three things: the worker stops within 2 seconds of
- * being interrupted, {@link #cleanedUp()} is true afterwards, and the
- * thread's interrupt flag is still set when {@code run()} returns.
+ * WHAT IS WRONG RIGHT NOW
+ *   Nothing in run() reacts to that interrupt. The loop condition is true, so
+ *   it never consults the interrupt flag. And Thread.sleep CLEARS the flag when
+ *   it throws InterruptedException, so after the catch block discards the
+ *   exception there is no trace of the request left: the worker keeps counting
+ *   units forever, cleanedUp() stays false, and the caller that asked for the
+ *   cancellation waits out its timeout.
  *
- * <p>Getting two of the three is the usual half-failure, and each half is its
- * own production bug: a worker that stops but skips its cleanup leaks whatever
- * it was holding, and a worker that stops but eats the flag leaves the code
- * above it with no way to learn it was cancelled.
+ * YOUR TASK
+ *   1. run() — leave the loop when the thread has been interrupted, instead of
+ *      looping unconditionally.
+ *   2. run() — run cleanup() on every exit path, which means a finally block,
+ *      not a line at the bottom of the loop.
+ *   3. run() — leave the interrupt flag set when you return: either rethrow, or
+ *      call Thread.currentThread().interrupt() before exiting.
  *
- * <pre>
- * ./mvnw -q compile
- * java -cp target/classes com.locallearn.concurrency.exercises.Ex04Worker   # fast loop
- * ./mvnw test -Dtest='ExerciseTests$Ex4'                                    # the grade
- * </pre>
+ * RULES
+ *   Do not change the signatures — run() cannot throw a checked exception, so
+ *   "rethrow" here means restoring the flag rather than declaring throws. A
+ *   worker that stops but skips cleanup leaks whatever it held; a worker that
+ *   stops but eats the flag leaves the code above it with no way to learn it
+ *   was cancelled. Two of three is the usual half-failure, and each half is its
+ *   own production bug.
+ *
+ * DONE WHEN
+ *   Running this file prints all PASS and exits 0. Across 5 trials it checks:
+ *   1. the worker did some work before being interrupted (so there is something
+ *      to cancel);
+ *   2. the thread is no longer alive within 2 seconds of interrupt();
+ *   3. cleanedUp() is true afterwards;
+ *   4. the interrupt flag is still set at the moment run() returns.
+ *
+ * HOW TO RUN
+ *   Press Run in VS Code (Code Runner, Ctrl/Cmd+Alt+N) with this file open, or:
+ *     cd concurrency-lab
+ *     ./run.sh Ex04Worker
+ *
+ * HINT
+ *   Interruption is cooperative: it sets a flag, it does not stop anything. Two
+ *   places must cooperate — the loop condition, and every blocking call that
+ *   throws InterruptedException and clears the flag on the way out.
+ *
+ * SEE ALSO
+ *   Demo t01threads.D3_InterruptionAndCancellation shows the failure live.
+ *   Reference solution: solutions/Solutions.java.
  */
 public final class Ex04Worker implements InterruptibleWorker {
 
     private volatile long units;
     private volatile boolean cleanedUp;
 
+    /*
+     * Must guarantee three things once someone calls interrupt() on this
+     * thread: it stops within a couple of seconds, cleanup() has run, and the
+     * interrupt flag is still set when run() returns. Miss any one of them and
+     * the shutdown path either hangs, leaks the resources this worker held, or
+     * silently loses the cancellation request before anyone upstream can see
+     * it.
+     */
     @Override
     public void run() {
-        while (true) {              // TODO broken: never checks for cancellation
+        // WRONG: the loop condition never looks at the interrupt flag, and there is no
+        // finally block, so no exit path reaches cleanup().
+        // TODO make the loop exit when the thread is interrupted, and call cleanup()
+        // from a finally block so it runs however the loop ends.
+        while (true) {
             try {
                 Thread.sleep(10);
                 units++;
             } catch (InterruptedException e) {
-                // TODO broken: swallowed. The flag was cleared by the throw
-                // and is not restored, so the request is simply gone.
+                // WRONG: sleep() cleared the flag when it threw, and this block neither
+                // rethrows nor restores it, so the cancellation request dies here.
+                // TODO restore the flag (Thread.currentThread().interrupt()) and stop
+                // working, instead of discarding the exception and looping again.
             }
         }
     }
@@ -61,7 +103,10 @@ public final class Ex04Worker implements InterruptibleWorker {
         return cleanedUp;
     }
 
-    /** Call this on the way out — from a finally block, so every exit path runs it. */
+    /*
+     * Call this on the way out — from a finally block, so every exit path runs
+     * it.
+     */
     private void cleanup() {
         cleanedUp = true;
     }

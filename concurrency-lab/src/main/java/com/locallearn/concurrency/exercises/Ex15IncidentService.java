@@ -17,67 +17,110 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 
-/**
- * <b>EXERCISE 15 — the incident.</b> Demos: {@code t10diagnostics.D30_TheIncident}
- * and {@code t10diagnostics.D31_DiagnosingTheIncident}.
+/*
+ * EXERCISE 15 — the capstone: one service, four unrelated bugs
  *
- * <p>This is the capstone, and it is deliberately unlike every other
- * exercise in this package. The others name their mechanism in the heading, so
- * you always know which chapter the fix comes from. Production never does
- * that. Here you get a service, four failing checks, and four
- * <em>symptoms</em> — and which of topics 1 to 9 applies to each is the
- * thing you are being examined on.
+ * THE SCENARIO
+ *   A small request service of the kind you would find behind an HTTP endpoint.
+ *   handle runs a request on a worker pool and answers with the tenant it was
+ *   served for; transfer moves money between two ledgers, each guarded by its
+ *   own lock; a background reaper drains an audit queue. Callers arrive
+ *   concurrently from many threads — in the checker, Stress's workers stand in
+ *   for your web container's request threads.
  *
- * <p>The service below is about seventy lines and looks entirely reasonable.
- * Four lines are wrong:
+ * FOUR SEPARATE CONCERNS IN ONE CLASS
+ *   Unlike every other exercise here, this one does not combine variations on a
+ *   single mechanism. It combines four unrelated failure modes, one per area,
+ *   and they are fixed in four different ways. If two of your fixes look the
+ *   same, one diagnosis is wrong:
+ *   1. Lock ordering — in transfer (topics 1, 3, 4).
+ *   2. Thread-pool starvation — in handle (topics 5, 8).
+ *   3. Thread-local lifecycle on a pooled thread — in handle (topic 6).
+ *   4. Waiting versus polling — in reap (topic 5).
  *
- * <ol>
- *   <li><b>Two requests hang; the rest of the service keeps working.</b> The
- *       JVM will tell you what this one is if you ask it the right question.
- *       Both stuck threads report {@code WAITING}, which is worth
- *       remembering before you go grepping for {@code BLOCKED}.</li>
- *   <li><b>Under concurrent load the service stops completely and stays
- *       stopped</b> — and nothing reports a deadlock, because there is no
- *       cycle of lock <em>ownership</em> anywhere. Look at where the worker
- *       threads are parked and at what the pool's own queue is doing. Ask
- *       yourself what those threads are waiting <em>for</em>, and who was
- *       supposed to do it.</li>
- *   <li><b>Nothing hangs and some answers are wrong.</b> Requests that carry
- *       no tenant come back attributed to somebody else's tenant. No thread
- *       dump, deadlock report, or CPU measurement will ever show you this;
- *       only comparing what you sent with what came back. Ask what a pooled
- *       thread still carries after it finishes a task.</li>
- *   <li><b>A core is pinned while the service is idle.</b> The thread doing
- *       it is {@code RUNNABLE}, which is exactly what a thread doing useful
- *       work looks like, so the state word cannot help you. The verb you
- *       chose can.</li>
- * </ol>
+ * WHAT IS WRONG RIGHT NOW
+ *   Four lines are wrong. Each one produces a different symptom:
+ *   1. Some transfers hang; the rest of the service keeps working. transfer
+ *      locks fromLedger first and toLedger second, so the acquisition order
+ *      depends on the arguments. A transfer 3→7 and a transfer 7→3
+ *      running at once each hold the lock the other needs: a circular wait that
+ *      never breaks. Both stuck threads report WAITING, not BLOCKED, because
+ *      these are ReentrantLocks.
+ *   2. Under concurrent load the service stops completely and stays stopped.
+ *      handle submits a task to pool and that task submits validate to the SAME
+ *      pool, then blocks on validation.get(). With workers outer tasks each
+ *      occupying a thread and each waiting for an inner task that is still
+ *      queued behind them, no thread is ever free to run a validation. No
+ *      deadlock detector reports it: there is no cycle of lock OWNERSHIP, only
+ *      threads waiting for work that cannot be scheduled.
+ *   3. Nothing hangs and some answers are wrong. handle sets CURRENT_TENANT and
+ *      never removes it. The pooled thread keeps that value after the task
+ *      ends, so the next request on that thread — one that carried no tenant at
+ *      all — reads the previous caller's tenant and answers under it. Which
+ *      tenant leaks depends on which one used the thread last, which is why
+ *      this never reproduces in staging.
+ *   4. A core is pinned while the service is idle. reap calls
+ *      auditQueue.poll(), which returns null at once when the queue is empty,
+ *      so the reaper loops flat out with nothing to do. It shows as RUNNABLE in
+ *      a dump, which is exactly what a thread doing real work looks like.
  *
- * <p>Run {@code D30_TheIncident} to watch all four, then
- * {@code D31_DiagnosingTheIncident} only once you have made your own
- * diagnosis. Each of the four defects came from a different topic; if you
- * find yourself fixing two of them the same way, one of the diagnoses is
- * wrong.
+ * YOUR TASK
+ *   1. transfer(int, int, long) — take the two locks in an order that does not
+ *      depend on the direction of the transfer, so no two callers can build a
+ *      cycle. The balance updates must stay atomic with respect to each other.
+ *   2. handle(String, String) — stop a pool task from waiting on another task
+ *      submitted to the same pool. Either run the validation inline, or give it
+ *      an executor that is not the one the caller is occupying.
+ *   3. handle(String, String) — clear CURRENT_TENANT when the task finishes, on
+ *      every path including the failing one, so nothing survives into the next
+ *      task on that thread.
+ *   4. reap() — wait for the next audit entry instead of asking for it in a
+ *      loop, and still exit when shutdown() interrupts the reaper.
  *
- * <p>Each failure below prints a live evidence block built with {@link Dump} —
- * the deadlock detectors, a census of thread states, and the frame in
- * <em>your</em> code where each thread stopped. That is deliberate: a failure
- * here should read like the first thing you would have typed at a real
- * incident, so the habit transfers.
+ * RULES
+ *   1. Do not fix the stall by enlarging the pool. More workers only delays the
+ *      point at which all of them are waiting on each other.
+ *   2. Keep the service's threads named with THREAD_PREFIX; the CPU check
+ *      attributes idle CPU time by that prefix.
+ *   3. Requests must still be served concurrently — a single global lock around
+ *      handle would stop the leaks and fail the throughput checks.
  *
- * <pre>
- * ./mvnw -q compile
- * java -cp target/classes com.locallearn.concurrency.exercises.Ex15IncidentService   # fast loop
- * ./mvnw test -Dtest='ExerciseTests$Ex15'                                            # the grade
- * </pre>
+ * DONE WHEN
+ *   Running this file prints all PASS and exits 0. The four checks are:
+ *   1. 320 requests from 16 concurrent callers all complete inside 4 seconds;
+ *   2. two trials of 16 callers x 1,000 bidirectional transfer pairs finish,
+ *      and ledgerTotal() is unchanged — no money created or destroyed;
+ *   3. 200 requests carrying no tenant all come back as ANONYMOUS;
+ *   4. the service's threads burn almost no CPU across an idle second.
+ *
+ * HOW TO RUN
+ *   Press Run in VS Code (Code Runner, Ctrl/Cmd+Alt+N) with this file open, or:
+ *     cd concurrency-lab
+ *     ./run.sh Ex15IncidentService
+ *
+ * HINT
+ *   Each failure prints a live evidence block built with Dump: the two deadlock
+ *   detectors, a census of thread states, and the frame in YOUR code where each
+ *   thread stopped. Read it the way you would read a 3am incident — two
+ *   families of thread matter, incident-* (the service's own) and stress-* (the
+ *   callers), and a triage that looks only at the service's threads misses a
+ *   deadlock reached through a public method.
+ *   Two of these four are invisible to a thread dump: a leaked tenant shows up
+ *   only by comparing what you sent with what came back, and a spinning thread
+ *   looks exactly like a working one.
+ *
+ * SEE ALSO
+ *   Demo t10diagnostics.D30_TheIncident shows all four failures live; run
+ *   t10diagnostics.D31_DiagnosingTheIncident only after you have made your own
+ *   diagnosis. Reference solution: solutions/Solutions.java.
  */
 public final class Ex15IncidentService implements IncidentService {
 
-    /**
-     * The per-request context. This is {@code SecurityContextHolder}, it is
-     * SLF4J's {@code MDC}, and it is in every service you will ever work on:
-     * set once at the entry point so that code three layers down does not
-     * need a tenant parameter it does not care about.
+    /*
+     * The per-request context. This is SecurityContextHolder, it is SLF4J's
+     * MDC, and it is in every service you will ever work on: set once at the
+     * entry point so that code three layers down does not need a tenant
+     * parameter it does not care about.
      */
     private static final ThreadLocal<String> CURRENT_TENANT = new ThreadLocal<>();
 
@@ -109,16 +152,35 @@ public final class Ex15IncidentService implements IncidentService {
         this.reaper.start();
     }
 
+    /*
+     * Serves one request on a pool thread. Two guarantees, and this method
+     * breaks both. It must answer with the tenant THIS call passed in (or
+     * ANONYMOUS when it passed none), and it must not park a pool thread on
+     * work that only another pool thread could do — with a fixed pool, that is
+     * a stall no timeout ever clears.
+     */
     @Override
     public String handle(String tenant, String request) throws Exception {
         Future<String> outer = pool.submit(() -> {
+            // WRONG: the value is set on a POOLED thread and never removed, so it
+            // outlives the task. The next request to land on this thread — including
+            // one that passed tenant == null — reads whatever the last caller left.
+            // TODO clear CURRENT_TENANT when this task ends, on every exit path
+            // (try/finally), so the thread carries nothing into the next task.
             if (tenant != null) {
-                CURRENT_TENANT.set(tenant);                 // TODO symptom 3
+                CURRENT_TENANT.set(tenant);
             }
 
             // Validation is farmed out so it can run "in parallel", and the
             // request waits for the verdict before answering.
-            Future<String> validation = pool.submit(() -> validate(request));   // TODO symptom 2
+            // WRONG: this task is running ON pool and submits to pool, then blocks on
+            // the result. Once all `workers` threads are here, every inner task sits in
+            // the queue behind them and nothing can ever run it — the pool starves
+            // itself. No deadlock detector sees it; there is no lock cycle, only
+            // threads waiting for work that cannot be scheduled.
+            // TODO stop this task from depending on a second task in the same pool:
+            // call validate(request) inline, or submit it to a different executor.
+            Future<String> validation = pool.submit(() -> validate(request));
             validation.get();
 
             String effective = CURRENT_TENANT.get();
@@ -136,12 +198,26 @@ public final class Ex15IncidentService implements IncidentService {
         return request.isEmpty() ? "rejected" : "accepted";
     }
 
+    /*
+     * Moves money between two ledgers. Both balance updates have to land
+     * together, so both locks must be held at once — that part is right. What
+     * it must also guarantee is that two callers can never end up each holding
+     * the lock the other wants. Here the order comes from the arguments, so
+     * 3->7 and 7->3 running at the same time close a cycle and both park
+     * forever, holding their locks; anything that later needs those ledgers
+     * (including ledgerTotal()) joins the queue.
+     */
     @Override
     public void transfer(int fromLedger, int toLedger, long amount) {
         if (fromLedger == toLedger) {
             return;
         }
-        locks[fromLedger].lock();                           // TODO symptom 1
+        // WRONG: acquisition order follows the direction of the transfer, so the order
+        // differs between callers. Two opposite transfers over the same pair deadlock.
+        // TODO impose one global order on the two locks that every caller agrees on —
+        // lock the lower ledger index first, then the higher — so no cycle can form.
+        // Keep both held while both balances are updated.
+        locks[fromLedger].lock();
         try {
             locks[toLedger].lock();
             try {
@@ -155,10 +231,21 @@ public final class Ex15IncidentService implements IncidentService {
         }
     }
 
-    /** Drains the audit queue in the background. */
+    /*
+     * Drains the audit queue in the background. Must consume no CPU while the
+     * queue is empty: this thread lives for the whole life of the service, so
+     * a loop that keeps asking rather than waiting holds a core for as long as
+     * the process runs — and it reports RUNNABLE, indistinguishable in a dump
+     * from a thread doing work.
+     */
     private void reap() {
         while (running) {
-            String entry = auditQueue.poll();               // TODO symptom 4
+            // WRONG: poll() returns null the instant the queue is empty, so this loop
+            // spins as fast as the CPU allows whenever there is nothing to audit.
+            // TODO block until an entry arrives (take()), and handle the
+            // InterruptedException that shutdown() sends as the signal to leave the
+            // loop — a parked thread cannot notice the `running` flag on its own.
+            String entry = auditQueue.poll();
             if (entry != null) {
                 // pretend to write it somewhere
                 entry.length();
@@ -198,7 +285,7 @@ public final class Ex15IncidentService implements IncidentService {
 
     private static final int WORKERS = 4;
 
-    /**
+    /*
      * How long a stress run gets before the checker calls it a hang. Two of
      * these four defects stop the service permanently rather than throwing, so
      * every run here is bounded: a checker that waits for a wedged service
@@ -206,24 +293,32 @@ public final class Ex15IncidentService implements IncidentService {
      */
     private static final int HANG_BUDGET_SECONDS = 4;
 
-    /** Trials, because a lock cycle is a race: one clean run proves nothing. */
+    /*
+     * Trials, because a lock cycle is a race: one clean run proves nothing.
+     */
     private static final int TRANSFER_TRIALS = 2;
 
-    /** Wall-clock window over which an idle service's CPU use is measured. */
+    /*
+     * Wall-clock window over which an idle service's CPU use is measured.
+     */
     private static final long IDLE_WINDOW_MILLIS = 1_000;
 
-    /** How many stopped-at frames an evidence block prints per thread family. */
+    /*
+     * How many stopped-at frames an evidence block prints per thread family.
+     */
     private static final int FRAMES_SHOWN = 5;
 
-    /**
-     * The caller threads — {@link Stress}'s workers, standing in for your web
+    /*
+     * The caller threads — Stress's workers, standing in for your web
      * container's request threads. For a deadlock reached through a public
-     * method it is these, not the pool, that are stuck, and a triage that looks
-     * only at the service's own threads finds nothing.
+     * method it is these, not the pool, that are stuck, and a triage that
+     * looks only at the service's own threads finds nothing.
      */
     private static final String CALLER_THREADS = "stress-";
 
-    /** The service's own threads. */
+    /*
+     * The service's own threads.
+     */
     private static final String SERVICE_THREADS = THREAD_PREFIX;
 
     public static void main(String[] args) {
@@ -394,17 +489,16 @@ public final class Ex15IncidentService implements IncidentService {
 
     // ── checker helpers ────────────────────────────────────────────────────
 
-    /**
-     * The evidence block. This is what you would have collected by hand at 3am,
-     * and it is built from exactly the calls D29 demonstrates: the two deadlock
-     * detectors, then a census of the threads that matter, then the frame in
-     * this lab's own code where each of them stopped.
-     *
-     * <p>Two families of thread matter, and forgetting either one is a classic
-     * triage mistake. {@code incident-*} are the service's own threads.
-     * {@code stress-*} are the callers — the equivalent of your web container's
-     * request threads — and for a lock-ordering deadlock reached through a
-     * public method it is the <em>callers</em> that are stuck, not the pool.
+    /*
+     * The evidence block. This is what you would have collected by hand at
+     * 3am, and it is built from exactly the calls D29 demonstrates: the two
+     * deadlock detectors, then a census of the threads that matter, then the
+     * frame in this lab's own code where each of them stopped. Two families of
+     * thread matter, and forgetting either one is a classic triage mistake.
+     * incident-* are the service's own threads. stress-* are the callers — the
+     * equivalent of your web container's request threads — and for a lock-
+     * ordering deadlock reached through a public method it is the CALLERS that
+     * are stuck, not the pool.
      */
     private static String evidence(String... prefixes) {
         StringBuilder text = new StringBuilder("\n\n--- evidence ---------------------------------\n");
@@ -438,7 +532,7 @@ public final class Ex15IncidentService implements IncidentService {
         }
     }
 
-    /**
+    /*
      * Best-effort cleanup. A wedged service left running would keep a spinning
      * thread alive and skew the CPU measurement of every later check, so this
      * runs even when a check has already failed.

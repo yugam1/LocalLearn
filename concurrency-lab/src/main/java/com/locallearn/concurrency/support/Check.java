@@ -7,12 +7,14 @@ import java.util.List;
  * A three-method test harness, so every exercise can be a file you run with
  * {@code java} and get an answer in seconds.
  *
- * <p>The JUnit contracts in {@code src/test} remain the authority: they run more
- * trials, they run the identical assertions against the reference solutions, and
- * they are what "done" means. This class exists for the loop before that — edit,
- * run, see the number, edit again — without paying Maven's startup on every
- * attempt. Each exercise's {@code main} prints the {@code ./mvnw} command that
- * grades it for real.
+ * <p>This is the loop you actually work in: edit the exercise, press Run
+ * (Code Runner) or {@code ./run.sh Ex01Counter}, read the PASS/FAIL lines, edit
+ * again. Every check runs many trials, so a green run means the code held up
+ * under real contention rather than getting lucky once.
+ *
+ * <p>The JUnit contracts in {@code src/test} run the same assertions against the
+ * reference solutions and stay available for anyone who wants them, but they need
+ * Maven; nothing here does.
  *
  * <p>Deliberately not JUnit: JUnit is test-scoped, and an exercise you can only
  * run through a build tool is one you run less often.
@@ -114,14 +116,16 @@ public final class Check {
     public int finish() {
         System.out.println();
         if (failures.isEmpty()) {
-            System.out.printf("✅  %d/%d passed — now prove it properly:%n", passed, passed);
-            System.out.printf("      ./mvnw test -Dtest='%s'%n", mavenTest);
+            System.out.printf("✅  %d/%d passed — run it a few more times; concurrency bugs%n", passed, passed);
+            System.out.println("    that pass once do exist. Then move to the next exercise.");
+            System.out.printf("      (optional, needs Maven: ./mvnw test -Dtest='%s')%n", mavenTest);
             return 0;
         }
         System.out.printf("❌  %d/%d passed, %d failed:%n", passed, passed + failures.size(), failures.size());
         failures.forEach(failure -> System.out.println("      · " + failure));
         System.out.println();
-        System.out.println("    That is the starting line, not a problem. Fix the TODOs above, rerun.");
+        System.out.println("    That is the starting line, not a problem. Read the FAIL lines — each one");
+        System.out.println("    says what went wrong — fix the TODOs in this file, and run it again.");
         return 1;
     }
 

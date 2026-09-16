@@ -10,57 +10,106 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
-/**
- * <b>EXERCISE 10 — confine the correlation id to its own thread, and clean it
- * up.</b> See {@code t06shared.D18_CopyOrConfine}.
+/*
+ * EXERCISE 10 — a correlation id that belongs to one thread
  *
- * <p>Three defects, each with its own test, and all three are things that
- * have shipped in real filters:
- * <ol>
- *   <li><b>Not confined at all.</b> A {@code static String} is shared by
- *       every thread in the JVM, so two concurrent requests overwrite each
- *       other's id. Thread confinement is the fix, and {@link ThreadLocal}
- *       is how you express it.</li>
- *   <li><b>Cleanup is not in a {@code finally}.</b> When the body throws,
- *       the unbind is skipped and the value stays attached to the thread.
- *       On a pooled thread that means the next request — a different user —
- *       inherits it. This is precisely why the MDC rule in
- *       {@code ../01-foundations/07-logging-mdc-correlation-ids.md} is
- *       {@code MDC.clear()} in a {@code finally}, non-negotiable.</li>
- *   <li><b>Nesting is not restored.</b> Clearing on exit is wrong when a
- *       scope was nested inside another: the outer request's id must come
- *       back, not vanish. Save the previous value before setting, and put it
- *       back afterwards.</li>
- * </ol>
+ * THE SCENARIO
+ *   This is the servlet filter that stamps a correlation id onto a request so
+ *   every log line from that request carries it. The web container calls
+ *   runWithCorrelationId(id, body) around the whole request, and any code
+ *   deeper in the stack calls currentCorrelationId() to read it back. The
+ *   threads are pooled: the same worker thread serves request after request,
+ *   for different users.
  *
- * <p>One more rule that no test here can see but every reviewer should:
- * when you do clear, use {@code remove()}, never {@code set(null)}.
- * {@code set(null)} leaves the entry in the thread's map holding a null —
- * the slot is never reclaimed, and on a pool thread that lives forever, so
- * does the entry. D18 proves the difference with an {@code initialValue}.
+ * WHAT IS WRONG RIGHT NOW
+ *   Three separate defects, one per test:
+ *   1. The id lives in a static field — one slot for the entire JVM. Request A
+ *      on thread 1 writes "acme", request B on thread 2 writes "globex", and
+ *      now A reads "globex" out of its own scope.
+ *   2. The cleanup sits after body.run() with no finally. A body that throws
+ *      skips it, so the id stays attached and the next request on that pooled
+ *      thread — a different user — reads it.
+ *   3. The cleanup clears instead of restoring. An inner scope nested inside an
+ *      outer one wipes the slot on exit, so the outer request's id is gone for
+ *      the rest of its own body.
  *
- * <pre>
- * ./mvnw -q compile
- * java -cp target/classes com.locallearn.concurrency.exercises.Ex10Context   # fast loop
- * ./mvnw test -Dtest='ExerciseTests$Ex10'                                    # the grade
- * </pre>
+ * YOUR TASK
+ *   1. correlationId field — must give each thread its own slot instead of one
+ *      shared slot. A ThreadLocal is a map hanging off the Thread object
+ *      itself, so there is nothing shared and nothing to lock.
+ *   2. runWithCorrelationId(String, Runnable) — read and save whatever was
+ *      bound before, bind id, run the body, and in a finally put the saved
+ *      value back (removing the entry when there was no previous value).
+ *   3. currentCorrelationId() — returns this thread's id, or null when this
+ *      thread has none bound.
+ *
+ * RULES
+ *   Unbind with remove(), never set(null). set(null) leaves the entry in the
+ *   thread's map holding a null, so the slot is never reclaimed — and on a pool
+ *   thread, which lives for the life of the process, neither is the entry.
+ *
+ * DONE WHEN
+ *   Running this file prints all PASS and exits 0. The checks are:
+ *   1. 16 threads × 500 requests, 3 trials: no request ever reads another's id.
+ *   2. A request whose body throws leaves nothing behind on its pooled thread,
+ *      and neither does one that completes normally.
+ *   3. A nested scope restores the enclosing id on exit; the outermost one
+ *      unbinds.
+ *
+ * HOW TO RUN
+ *   Press Run in VS Code (Code Runner, Ctrl/Cmd+Alt+N) with this file open, or:
+ *     cd concurrency-lab
+ *     ./run.sh Ex10Context
+ *
+ * HINT
+ *   This is the same rule as MDC.clear() in a finally from
+ *   ../01-foundations/07-logging-mdc-correlation-ids.md — non-negotiable there
+ *   for exactly the reason test 2 measures here.
+ *
+ * SEE ALSO
+ *   Demo t06shared.D18_CopyOrConfine shows the failure live, and proves the
+ *   remove() vs set(null) difference with an initialValue. Reference solution:
+ *   solutions/Solutions.java.
  */
 public final class Ex10Context implements RequestContext {
 
-    // TODO broken: one field for the whole JVM. Every thread shares it.
+    // WRONG: one `static` slot for the whole JVM. Every thread reads and writes the
+    // same String reference, so two requests running at once overwrite each other.
+    // TODO give each thread its own slot: hold a ThreadLocal<String> here instead of a
+    // TODO bare String, so the value is reachable only from the thread that bound it.
     private static String correlationId;
 
+    /*
+     * Binds id for the duration of body, and must leave the thread exactly as
+     * it found it — whatever id was bound before is what must be bound after,
+     * on every exit path including a thrown exception. If it does not, a
+     * pooled thread carries one request's id into the next request, which
+     * belongs to someone else, and a nested scope destroys its caller's id
+     * halfway through a trace.
+     */
     @Override
     public void runWithCorrelationId(String id, Runnable body) {
+        // WRONG: nothing remembers what was bound before this scope, so the exit path
+        // below has no previous value to restore.
+        // TODO read the currently bound id into a local BEFORE overwriting it, then
+        // TODO bind `id` into this thread's own slot.
         correlationId = id;
         body.run();
-        // TODO broken: not in a finally, so a throwing body skips it — and
-        // TODO broken: clears instead of restoring, so nesting loses the outer id.
+        // WRONG: two defects on the unbind. (1) It is not in a `finally`, so a body that
+        // throws jumps straight past it and the id stays on the thread — and a pooled
+        // thread outlives the request, so the next user inherits it. (2) It clears rather
+        // than restoring, so an inner scope wipes the enclosing request's id.
+        // TODO move the unbind into a `finally` around body.run(), and make it restore
+        // TODO the saved previous value — calling remove() only when there was none.
         correlationId = null;
     }
 
+    /*
+     * Returns the id bound to THIS thread, or null when this thread has none.
+     */
     @Override
     public String currentCorrelationId() {
+        // TODO read from this thread's own slot rather than the shared field.
         return correlationId;
     }
 

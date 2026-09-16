@@ -5,38 +5,78 @@ import com.locallearn.concurrency.support.Check;
 
 import java.util.concurrent.TimeUnit;
 
-/**
- * <b>EXERCISE 2 — make the stop signal visible.</b> Demo: {@code t02visibility.D4_StaleFlagHang}.
+/*
+ * EXERCISE 2 — a stop flag the worker never sees
  *
- * <p>The test spins a worker on {@link #shouldStop()} and then calls
- * {@link #stop()} from another thread. As written, the JIT may hoist the
- * field read out of the worker's loop and the worker never exits — the test
- * will time out rather than fail fast, which is itself the lesson.
+ * THE SCENARIO
+ *   The shutdown switch for a background thread. One thread loops on
+ *   shouldStop() doing work; on shutdown, or when the request it was serving is
+ *   abandoned, another thread calls stop() and then waits for the worker to
+ *   finish. This is the object both threads share to agree that it is time to
+ *   stop.
  *
- * <p>Hint: one keyword. Think about which of volatile's three guarantees
- * you are relying on here, and whether you need the other two.
+ * WHAT IS WRONG RIGHT NOW
+ *   Nothing as the file stands: the field below is already declared volatile
+ *   and the checks pass. The defect this exercise is built around is that same
+ *   field without the keyword. A plain field creates no happens-before edge
+ *   between the write in stop() and the read in shouldStop(), so once the JIT
+ *   compiles the worker's loop it is allowed to hoist the read out — load the
+ *   value once into a register and test that register forever. The write lands,
+ *   the worker never sees it, and join() times out.
  *
- * <p>Note the shape of the failure. Nothing throws, no value is wrong, and the
- * write definitely happened — there is simply a thread that never stops. That
- * is what a visibility bug looks like in production too, which is why it gets
- * misfiled as "stuck on the database" instead of being read as a memory-model
- * problem.
+ * YOUR TASK
+ *   1. stop() — the write must be published so that any thread's next read of
+ *      the field sees it.
+ *   2. shouldStop() — must re-read the field on every call, so a spinning loop
+ *      cannot keep testing a cached copy.
  *
- * <pre>
- * ./mvnw -q compile
- * java -cp target/classes com.locallearn.concurrency.exercises.Ex02StopSignal   # fast loop
- * ./mvnw test -Dtest='ExerciseTests$Ex2'                                        # the grade
- * </pre>
+ * RULES
+ *   Fix it in the field declaration, not in the loop. Dropping a Thread.sleep
+ *   or a println into the spinning loop also makes the worker exit, but only by
+ *   accident — those insert a safepoint and the memory-model bug is still
+ *   there, waiting for the loop that has neither.
+ *
+ * DONE WHEN
+ *   Running this file prints all PASS and exits 0. The checks are:
+ *   1. across 6 trials, a worker spinning on shouldStop() is no longer alive
+ *      within 2,000 ms of stop() — each trial spins for 200 ms first so the JIT
+ *      has actually compiled the loop;
+ *   2. a fresh signal reports false, and reports true after stop() — this
+ *      catches a fix that is visible and also wrong, e.g. a flag born stopped.
+ *   Watch for the third outcome: if the run neither passes nor fails but simply
+ *   sits there, that is the bug reproducing. Kill it and look at the field.
+ *
+ * HINT
+ *   One keyword. Ask which of volatile's three guarantees this needs —
+ *   visibility, atomicity, ordering — and whether the other two are doing
+ *   anything here. Note the shape of the failure too: nothing throws, no value
+ *   is wrong, the write definitely happened. In production that shape gets
+ *   misfiled as "stuck on the database" instead of being read as a memory-model
+ *   problem.
+ *
+ * SEE ALSO
+ *   Demo t02visibility.D4_StaleFlagHang shows the failure live. Reference
+ *   solution: solutions/Solutions.java.
  */
 public final class Ex02StopSignal implements StopSignal {
 
-    private volatile boolean stopped;        // TODO broken: no visibility guarantee
+    // volatile is what forces the loop to re-read this field instead of caching it.
+    private volatile boolean stopped;
 
+    /*
+     * Must publish the flag: after this returns, the next shouldStop() on any
+     * thread has to see true. If the write can sit in one core's store buffer,
+     * the worker keeps spinning and shutdown hangs on join().
+     */
     @Override
     public void stop() {
         stopped = true;
     }
 
+    /*
+     * Must be a fresh read of the flag every call. If the JIT may hoist it out
+     * of the caller's loop, the worker tests a stale register value forever.
+     */
     @Override
     public boolean shouldStop() {
         return stopped;
