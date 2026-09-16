@@ -80,6 +80,9 @@ import java.util.function.Supplier;
  *   in-flight count names the property you are actually being asked for.
  *
  * SEE ALSO
+ *   Docs — read this first:
+ *     docs/02-concurrency/09-forkjoin-parallel-virtual-threads.md, section
+ *     "EXERCISE 14".
  *   Demo t09parallel.D27_VirtualThreadsAndPinning measured both effects: a
  *   cores-sized pool managed ~120 blocking tasks per second where virtual
  *   threads managed ~68,000, and pinning alone cost 108x with zero contention.
@@ -195,7 +198,8 @@ public final class Ex14Runner implements WorkloadRunner {
     private static final long IO_BUDGET_MILLIS = 2_000;
 
     public static void main(String[] args) {
-        Check check = Check.named("Exercise 14 — what kind of work is this?", "ExerciseTests$Ex14");
+        Check check = Check.named("Exercise 14 — what kind of work is this?", "ExerciseTests$Ex14")
+                .reading("docs/02-concurrency/09-forkjoin-parallel-virtual-threads.md § \"EXERCISE 14\"");
 
         check.that("both workloads return every result, in submission order", () -> {
             try (WorkloadRunner runner = new Ex14Runner()) {

@@ -78,6 +78,8 @@ import java.util.concurrent.atomic.AtomicLong;
  *   down.
  *
  * SEE ALSO
+ *   Docs — read this first: docs/02-concurrency/07-coordination.md, section
+ *     "EXERCISE 12".
  *   Demo t07coordination.D20_SemaphorePermits shows the failure live; D21
  *   covers why a lost permit never appears as a deadlock. Reference solution:
  *   solutions/Solutions.java.
@@ -158,7 +160,8 @@ public final class Ex12Pool
     private static final int TRIALS = 3;
 
     public static void main(String[] args) {
-        Check check = Check.named("Exercise 12 — a limit that limits", "ExerciseTests$Ex12");
+        Check check = Check.named("Exercise 12 — a limit that limits", "ExerciseTests$Ex12")
+                .reading("docs/02-concurrency/07-coordination.md § \"EXERCISE 12\"");
 
         check.that("%d callers against a %d-slot pool never run more than %d at once — %d trials"
                 .formatted(CALLERS, LIMIT, LIMIT, TRIALS), () -> {

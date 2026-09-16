@@ -36,6 +36,7 @@ public final class Check {
     private final String title;
     private final String mavenTest;
     private final List<String> failures = new ArrayList<>();
+    private String reading;
     private int passed;
 
     private Check(String title, String mavenTest) {
@@ -52,6 +53,18 @@ public final class Check {
         System.out.println();
         System.out.println("═══ " + title + " ".repeat(Math.max(1, 66 - title.length())) + "═══");
         return check;
+    }
+
+    /**
+     * Names the chapter this exercise comes from, so a failing run points at the
+     * page that explains the fix rather than leaving you to find it.
+     *
+     * @param reading e.g. {@code "docs/02-concurrency/03-atomicity-races-cas.md
+     *                § \"`count++` is three operations\""}
+     */
+    public Check reading(String reading) {
+        this.reading = reading;
+        return this;
     }
 
     /**
@@ -126,6 +139,9 @@ public final class Check {
         System.out.println();
         System.out.println("    That is the starting line, not a problem. Read the FAIL lines — each one");
         System.out.println("    says what went wrong — fix the TODOs in this file, and run it again.");
+        if (reading != null) {
+            System.out.println("    The chapter that explains this: " + reading);
+        }
         return 1;
     }
 

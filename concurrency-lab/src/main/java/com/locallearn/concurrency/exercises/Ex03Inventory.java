@@ -59,6 +59,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  *   set one layer out.
  *
  * SEE ALSO
+ *   Docs — read this first: docs/02-concurrency/03-atomicity-races-cas.md,
+ *     section "Check-then-act: how 100 units of stock sell 138".
  *   Demo t03atomicity.D8_CheckThenActOversell shows the failure live. Reference
  *   solution: solutions/Solutions.java.
  */
@@ -112,7 +114,8 @@ public final class Ex03Inventory implements Inventory {
     private static final int TRIALS = 200;
 
     public static void main(String[] args) {
-        Check check = Check.named("Exercise 3 — check-then-act oversell", "ExerciseTests$Ex3");
+        Check check = Check.named("Exercise 3 — check-then-act oversell", "ExerciseTests$Ex3")
+                .reading("docs/02-concurrency/03-atomicity-races-cas.md § \"Check-then-act\"");
 
         check.that("never oversells single units — %d threads, %d trials"
                 .formatted(THREADS, TRIALS), () ->

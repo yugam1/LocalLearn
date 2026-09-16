@@ -79,6 +79,8 @@ import java.util.function.Consumer;
  *   otherwise kill a worker early.
  *
  * SEE ALSO
+ *   Docs — read this first: docs/02-concurrency/05-handoff-blocking-queues.md,
+ *     section "EXERCISE 8".
  *   Demos t05handoff.D13_UnboundedBacklog and t05handoff.D15_ShutdownPoisonPill
  *   show these failures live. Reference solution: solutions/Solutions.java.
  */
@@ -203,7 +205,8 @@ public final class Ex08Pipeline implements Pipeline {
     private static final int DRAIN_TRIALS = 3;
 
     public static void main(String[] args) {
-        Check check = Check.named("Exercise 8 — backpressure & draining shutdown", "ExerciseTests$Ex8");
+        Check check = Check.named("Exercise 8 — backpressure & draining shutdown", "ExerciseTests$Ex8")
+                .reading("docs/02-concurrency/05-handoff-blocking-queues.md § \"EXERCISE 8\"");
 
         check.that("submit() blocks at capacity %d — %,d items, %d trials"
                 .formatted(CAPACITY, PRESSURE_ITEMS, PRESSURE_TRIALS), () ->

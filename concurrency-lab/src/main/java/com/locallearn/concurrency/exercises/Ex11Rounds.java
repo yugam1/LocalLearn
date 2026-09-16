@@ -71,6 +71,8 @@ import java.util.concurrent.TimeUnit;
  *   wrong.
  *
  * SEE ALSO
+ *   Docs — read this first: docs/02-concurrency/07-coordination.md, section
+ *     "EXERCISE 11".
  *   Demo t07coordination.D19_LatchVersusBarrier shows the failure live.
  *   Reference solution: solutions/Solutions.java.
  */
@@ -175,7 +177,8 @@ public final class Ex11Rounds
     private static final long PATIENCE_MILLIS = 15_000;
 
     public static void main(String[] args) {
-        Check check = Check.named("Exercise 11 — a reusable rendezvous", "ExerciseTests$Ex11");
+        Check check = Check.named("Exercise 11 — a reusable rendezvous", "ExerciseTests$Ex11")
+                .reading("docs/02-concurrency/07-coordination.md § \"EXERCISE 11\"");
 
         check.that("every one of %d rounds waits for all %d workers — %d trials"
                 .formatted(ROUNDS, WORKERS, TRIALS), () -> {

@@ -110,6 +110,8 @@ import java.util.concurrent.locks.ReentrantLock;
  *   looks exactly like a working one.
  *
  * SEE ALSO
+ *   Docs — read this first: docs/02-concurrency/10-diagnostics-incident.md,
+ *     section "EXERCISE 15".
  *   Demo t10diagnostics.D30_TheIncident shows all four failures live; run
  *   t10diagnostics.D31_DiagnosingTheIncident only after you have made your own
  *   diagnosis. Reference solution: solutions/Solutions.java.
@@ -322,7 +324,8 @@ public final class Ex15IncidentService implements IncidentService {
     private static final String SERVICE_THREADS = THREAD_PREFIX;
 
     public static void main(String[] args) {
-        Check check = Check.named("Exercise 15 — the incident", "ExerciseTests$Ex15");
+        Check check = Check.named("Exercise 15 — the incident", "ExerciseTests$Ex15")
+                .reading("docs/02-concurrency/10-diagnostics-incident.md § \"EXERCISE 15\"");
 
         // ── Symptom 2: the service stops completely under load ─────────────
         check.that("keeps completing requests when many callers arrive at once", () -> {

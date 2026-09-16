@@ -65,6 +65,8 @@ import java.util.concurrent.atomic.AtomicLong;
  *   lock, so what it records is accurate.
  *
  * SEE ALSO
+ *   Docs — read this first: docs/02-concurrency/06-shared-structures.md,
+ *     section "EXERCISE 9".
  *   Demo t06shared.D17_AtomicMapUpdates shows the failure live. You have met
  *   this same check-then-act shape in D8 (overselling) and Ex6 (the cache
  *   stampede). Reference solution: solutions/Solutions.java.
@@ -147,7 +149,8 @@ public final class Ex09EventCounts implements EventCounts {
     private static final int CONSUME_KEYS = 20;
 
     public static void main(String[] args) {
-        Check check = Check.named("Exercise 9 — atomic map updates", "ExerciseTests$Ex9");
+        Check check = Check.named("Exercise 9 — atomic map updates", "ExerciseTests$Ex9")
+                .reading("docs/02-concurrency/06-shared-structures.md § \"EXERCISE 9\"");
 
         check.that("every record() is counted — %d threads x %,d over %d keys, %d trials"
                 .formatted(THREADS, RECORD_PER_THREAD, RECORD_KEYS, TRIALS), () -> {

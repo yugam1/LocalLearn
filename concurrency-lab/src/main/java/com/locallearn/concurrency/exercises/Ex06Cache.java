@@ -64,6 +64,9 @@ import java.util.function.Function;
  *   stampede, and "4 keys, 5 loads" is the same bug with a narrower window.
  *
  * SEE ALSO
+ *   Docs — read this first:
+ *     docs/02-concurrency/04-locks-deadlock-conditions.md, sections "The cache
+ *     stampede" and "`ReadWriteLock` — and when it actually helps".
  *   Demo t04locks.D12_ReadWriteLockAndCondition shows the locking machinery
  *   behind this. Reference solution: solutions/Solutions.java.
  */
@@ -119,7 +122,8 @@ public final class Ex06Cache implements ComputeOnceCache {
     private static final int MANY_KEYS = 5_000;
 
     public static void main(String[] args) {
-        Check check = Check.named("Exercise 6 — cache stampede", "ExerciseTests$Ex6");
+        Check check = Check.named("Exercise 6 — cache stampede", "ExerciseTests$Ex6")
+                .reading("docs/02-concurrency/04-locks-deadlock-conditions.md § \"The cache stampede\"");
 
         check.that("%d threads missing on the same cold key load it once — %d trials"
                 .formatted(THREADS, TRIALS), () -> {

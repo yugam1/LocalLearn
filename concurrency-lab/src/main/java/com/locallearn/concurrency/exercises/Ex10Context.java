@@ -67,6 +67,8 @@ import java.util.concurrent.atomic.AtomicReference;
  *   for exactly the reason test 2 measures here.
  *
  * SEE ALSO
+ *   Docs — read this first: docs/02-concurrency/06-shared-structures.md,
+ *     section "EXERCISE 10".
  *   Demo t06shared.D18_CopyOrConfine shows the failure live, and proves the
  *   remove() vs set(null) difference with an initialValue. Reference solution:
  *   solutions/Solutions.java.
@@ -123,7 +125,8 @@ public final class Ex10Context implements RequestContext {
     private static final int TRIALS = 3;
 
     public static void main(String[] args) {
-        Check check = Check.named("Exercise 10 — thread-confined request context", "ExerciseTests$Ex10");
+        Check check = Check.named("Exercise 10 — thread-confined request context", "ExerciseTests$Ex10")
+                .reading("docs/02-concurrency/06-shared-structures.md § \"EXERCISE 10\"");
 
         check.that("%d threads each see only their own id — %d trials".formatted(THREADS, TRIALS), () -> {
             // Trials, because a shared field is only wrong when two requests

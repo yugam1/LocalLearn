@@ -95,23 +95,23 @@ Do not open it early.
 
 Each one starts broken, and each is a bug you watched happen in a demo.
 
-| # | Class | Broken because | Demo |
-|---|---|---|---|
-| 1 | `Ex1Counter` | `value++` is read-modify-write | D7 |
-| 2 | `Ex2StopSignal` | plain `boolean` flag — the JIT hoists the read | D4 |
-| 3 | `Ex3Inventory` | check-then-act with a quantity (no `decrementAndGet` shortcut) | D8 |
-| 4 | `Ex4Worker` | never polls the flag; swallows `InterruptedException` | D3 |
-| 5 | `Ex5Bank` | lock order depends on the arguments → circular wait | D11 |
-| 6 | `Ex6Cache` | cache stampede + a `HashMap` shared across threads | D12 |
-| 7 | `Ex7Queue` | no locking, no blocking, overwrites when full | D12 |
-| 8 | `Ex8Pipeline` | unbounded backlog · `poll()` spin · stop-flag shutdown drops the queue | D13–D15 |
-| 9 | `Ex9EventCounts` | `get`-then-`put` / `containsKey`-then-act on a `ConcurrentHashMap` — each call is atomic, the pair isn't | D17 |
-| 10 | `Ex10Context` | a plain `static` field shared by every thread, not thread-confined at all — and not restored on the exceptional path | D18 |
-| 11 | `Ex11Rounds` | reuses a `CountDownLatch` across rounds — round 2 has no barrier at all | D19 |
-| 12 | `Ex12Pool` | `tryAcquire()` never waits and the task runs regardless — and `release` isn't in a `finally`, so a throwing task leaks the permit | D20 |
-| 13 | `Ex13Pool` | submission rule inverted — grows to max *before* trying the queue | D22, D24 |
-| 14 | `Ex14Runner` | one executor strategy applied to both CPU-bound and IO-bound work | D25–D27 |
-| 15 | `Ex15IncidentService` | **four** planted defects, one each from topics 4, 5+8, 6 and 5 — and you are not told which | D29–D31 |
+| # | Class | Broken because | Demo | Read first |
+|---|---|---|---|---|
+| 1 | `Ex1Counter` | `value++` is read-modify-write | D7 | [T3 §`count++` is three operations](03-atomicity-races-cas.md) |
+| 2 | `Ex2StopSignal` | plain `boolean` flag — the JIT hoists the read | D4 | [T2 §The one-word bug](02-jmm-visibility-happens-before.md) |
+| 3 | `Ex3Inventory` | check-then-act with a quantity (no `decrementAndGet` shortcut) | D8 | [T3 §Check-then-act](03-atomicity-races-cas.md) |
+| 4 | `Ex4Worker` | never polls the flag; swallows `InterruptedException` | D3 | [T1 §Interruption](01-threads-lifecycle-interruption.md) |
+| 5 | `Ex5Bank` | lock order depends on the arguments → circular wait | D11 | [T4 §Deadlock](04-locks-deadlock-conditions.md) |
+| 6 | `Ex6Cache` | cache stampede + a `HashMap` shared across threads | D12 | [T4 §The cache stampede](04-locks-deadlock-conditions.md) |
+| 7 | `Ex7Queue` | no locking, no blocking, overwrites when full | D12 | [T4 §`Condition`](04-locks-deadlock-conditions.md) |
+| 8 | `Ex8Pipeline` | unbounded backlog · `poll()` spin · stop-flag shutdown drops the queue | D13–D15 | [T5 §Exercise 8](05-handoff-blocking-queues.md) |
+| 9 | `Ex9EventCounts` | `get`-then-`put` / `containsKey`-then-act on a `ConcurrentHashMap` — each call is atomic, the pair isn't | D17 | [T6 §Exercise 9](06-shared-structures.md) |
+| 10 | `Ex10Context` | a plain `static` field shared by every thread, not thread-confined at all — and not restored on the exceptional path | D18 | [T6 §Exercise 10](06-shared-structures.md) |
+| 11 | `Ex11Rounds` | reuses a `CountDownLatch` across rounds — round 2 has no barrier at all | D19 | [T7 §Exercise 11](07-coordination.md) |
+| 12 | `Ex12Pool` | `tryAcquire()` never waits and the task runs regardless — and `release` isn't in a `finally`, so a throwing task leaks the permit | D20 | [T7 §Exercise 12](07-coordination.md) |
+| 13 | `Ex13Pool` | submission rule inverted — grows to max *before* trying the queue | D22, D24 | [T8 §Exercise 13](08-threadpool-internals.md) |
+| 14 | `Ex14Runner` | one executor strategy applied to both CPU-bound and IO-bound work | D25–D27 | [T9 §Exercise 14](09-forkjoin-parallel-virtual-threads.md) |
+| 15 | `Ex15IncidentService` | **four** planted defects, one each from topics 4, 5+8, 6 and 5 — and you are not told which | D29–D31 | [T10 §Exercise 15](10-diagnostics-incident.md) |
 
 **The tests are the point.** Each one runs 8–32 threads behind a start gate and
 repeats the whole trial 20–200 times, because a single trial of broken code has

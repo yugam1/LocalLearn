@@ -69,6 +69,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  *   may already have taken the item you woke for.
  *
  * SEE ALSO
+ *   Docs — read this first:
+ *     docs/02-concurrency/04-locks-deadlock-conditions.md, section
+ *     "`Condition` — wait until the state is right".
  *   Demo t04locks.D12_ReadWriteLockAndCondition shows lock plus condition live.
  *   Reference solution: solutions/Solutions.java.
  */
@@ -169,7 +172,8 @@ public final class Ex07Queue<T> implements BoundedQueue<T> {
     private static final long PARKED_CPU_BUDGET_MILLIS = 200;
 
     public static void main(String[] args) {
-        Check check = Check.named("Exercise 7 — blocking bounded queue", "ExerciseTests$Ex7");
+        Check check = Check.named("Exercise 7 — blocking bounded queue", "ExerciseTests$Ex7")
+                .reading("docs/02-concurrency/04-locks-deadlock-conditions.md § \"`Condition`\"");
 
         check.that("%d producers and %d consumers lose nothing, never exceed capacity"
                 .formatted(PRODUCERS, CONSUMERS), Ex07Queue::handOffEveryItem);

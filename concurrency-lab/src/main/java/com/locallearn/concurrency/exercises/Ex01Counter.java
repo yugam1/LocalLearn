@@ -54,6 +54,8 @@ import com.locallearn.concurrency.support.Stress;
  *   would ship for a metrics counter and which for an ID generator.
  *
  * SEE ALSO
+ *   Docs — read this first: docs/02-concurrency/03-atomicity-races-cas.md,
+ *     sections "`count++` is three operations" and "Compare-And-Swap".
  *   Demo t03atomicity.D7_LostUpdates shows the failure live. Reference
  *   solution: solutions/Solutions.java.
  */
@@ -95,7 +97,8 @@ public final class Ex01Counter implements Counter {
     private static final int TRIALS = 10;
 
     public static void main(String[] args) {
-        Check check = Check.named("Exercise 1 — lost updates", "ExerciseTests$Ex1");
+        Check check = Check.named("Exercise 1 — lost updates", "ExerciseTests$Ex1")
+                .reading("docs/02-concurrency/03-atomicity-races-cas.md § \"`count++` is three operations\"");
 
         check.that("every increment counted — %d threads x %,d, %d trials"
                 .formatted(THREADS, PER_THREAD, TRIALS), () -> {

@@ -57,6 +57,8 @@ import java.lang.management.ManagementFactory;
  *   have in production when a service goes quiet instead of erroring.
  *
  * SEE ALSO
+ *   Docs — read this first:
+ *     docs/02-concurrency/04-locks-deadlock-conditions.md, section "Deadlock".
  *   Demo t04locks.D11_Deadlock shows the failure live. Reference solution:
  *   solutions/Solutions.java.
  */
@@ -124,7 +126,8 @@ public final class Ex05Bank implements Bank {
     private static final int TRIAL_TIMEOUT_SECONDS = 4;
 
     public static void main(String[] args) {
-        Check check = Check.named("Exercise 5 — deadlock-free transfers", "ExerciseTests$Ex5");
+        Check check = Check.named("Exercise 5 — deadlock-free transfers", "ExerciseTests$Ex5")
+                .reading("docs/02-concurrency/04-locks-deadlock-conditions.md § \"Deadlock\"");
 
         check.that("transfers neither deadlock nor lose money — %d trials"
                 .formatted(TRIALS), () -> {

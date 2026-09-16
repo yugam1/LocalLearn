@@ -90,6 +90,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  *   pool that runs every task you hand it can still be wrong in all four ways.
  *
  * SEE ALSO
+ *   Docs — read this first: docs/02-concurrency/08-threadpool-internals.md,
+ *     section "EXERCISE 13".
  *   Demo t08pools.D22_PoolGrowthOrder shows the submission rule live, and
  *   t08pools.D24_SizingLifecycleAndLostExceptions shows the two shutdowns. You
  *   already built the parts: parking workers and a bounded queue in Ex7, the
@@ -254,7 +256,8 @@ public final class Ex13Pool implements com.locallearn.concurrency.api.Contracts.
     private static final long PATIENCE_MILLIS = 15_000;
 
     public static void main(String[] args) {
-        Check check = Check.named("Exercise 13 — a thread pool from scratch", "ExerciseTests$Ex13");
+        Check check = Check.named("Exercise 13 — a thread pool from scratch", "ExerciseTests$Ex13")
+                .reading("docs/02-concurrency/08-threadpool-internals.md § \"EXERCISE 13\"");
 
         check.that("a roomy queue means the pool NEVER grows past core", () -> {
             int core = 2;

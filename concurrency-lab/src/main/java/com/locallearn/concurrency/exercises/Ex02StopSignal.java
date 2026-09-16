@@ -55,6 +55,9 @@ import java.util.concurrent.TimeUnit;
  *   problem.
  *
  * SEE ALSO
+ *   Docs — read this first:
+ *     docs/02-concurrency/02-jmm-visibility-happens-before.md, sections "The
+ *     one-word bug" and "What `volatile` actually guarantees".
  *   Demo t02visibility.D4_StaleFlagHang shows the failure live. Reference
  *   solution: solutions/Solutions.java.
  */
@@ -91,7 +94,8 @@ public final class Ex02StopSignal implements StopSignal {
     private static final long PATIENCE_MILLIS = 2_000;
 
     public static void main(String[] args) {
-        Check check = Check.named("Exercise 2 — stop-flag visibility", "ExerciseTests$Ex2");
+        Check check = Check.named("Exercise 2 — stop-flag visibility", "ExerciseTests$Ex2")
+                .reading("docs/02-concurrency/02-jmm-visibility-happens-before.md § \"The one-word bug\"");
 
         check.that("a spinning worker stops within %,d ms — %d trials"
                 .formatted(PATIENCE_MILLIS, TRIALS), () -> {
