@@ -1,10 +1,7 @@
 {
+  "//": "Java runs through .vscode/run-java.sh, which dispatches on the file's path: concurrency-lab goes to its run.sh (plain javac, no Maven), order-service tells you to use F5. NOT code-runner.executorMapByGlob \u2014 that setting matches globs against the file's basename only, never its directory, so a path-shaped glob silently never matches and falls through to executorMap.",
   "code-runner.executorMap": {
-    "java": "cd $dir && javac -proc:full -cp \"$workspaceRoot/lib/lombok.jar\" -d . $fileName && java -cp \".:$workspaceRoot/lib/lombok.jar\" $fileNameWithoutExt"
-  },
-  "//": "concurrency-lab is multi-package (exercises reference support/ and api/), so a single-file javac cannot resolve it. run.sh does `javac -sourcepath src/main/java` on just the file you pressed Run on \u2014 that pulls in only the sources it actually references \u2014 then runs its main. No Maven, no target/, ~1s per run.",
-  "code-runner.executorMapByGlob": {
-    "**/concurrency-lab/**/*.java": "cd $workspaceRoot/concurrency-lab && ./run.sh $fullFileName"
+    "java": "\"$workspaceRoot/.vscode/run-java.sh\" \"$fullFileName\""
   },
   "code-runner.runInTerminal": true,
   "code-runner.saveFileBeforeRun": true,

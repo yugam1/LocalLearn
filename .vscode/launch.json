@@ -2,6 +2,23 @@
   "version": "0.2.0",
   "configurations": [
     {
+      // F5 on the exercise you have open — this is the debugger path, for
+      // breakpoints and stepping through a race. Code Runner (Ctrl/Cmd+Alt+N)
+      // stays the fast loop: it compiles with plain javac via
+      // concurrency-lab/run.sh and never touches Maven.
+      //
+      // "mainClass": "${file}" means "whatever file is focused". The Java
+      // extension resolves the classpath from concurrency-lab/pom.xml itself
+      // (embedded, it does not shell out to ./mvnw) and the exercises only
+      // need the JDK plus the module's own sources.
+      "type": "java",
+      "name": "concurrency-lab: run current file",
+      "request": "launch",
+      "mainClass": "${file}",
+      "projectName": "concurrency-lab",
+      "console": "integratedTerminal"
+    },
+    {
       "type": "java",
       "name": "order-service",
       "request": "launch",
