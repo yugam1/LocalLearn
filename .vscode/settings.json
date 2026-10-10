@@ -4,6 +4,8 @@
     "java": "\"$workspaceRoot/.vscode/run-java.sh\" \"$fullFileName\""
   },
   "code-runner.runInTerminal": true,
+  "//ignoreSelection": "Without this, pressing Run with text selected makes Code Runner write the selection to tempCodeRunnerFile.java and compile that instead of the file.",
+  "code-runner.ignoreSelection": true,
   "code-runner.saveFileBeforeRun": true,
   "java.compile.nullAnalysis.mode": "automatic",
 
