@@ -88,33 +88,51 @@
 import java.util.*;
 import java.util.function.Supplier;
 
-class Route {
-        long network;
-        public int prefix;
-        public  String hop;
-        String oString;
+class RTrie {
+        RTrie one;
+        RTrie zero;
+        String hop;
 
-        Route(String[] ent) {
-                String[] subnet = ent[0].split("/");
-                hop = ent[1];
-                prefix = Integer.parseInt(subnet[1]);
-                this.network = getNumNetwork(subnet[0]);
-        }
-
-        public long getNumNetwork(String s) {
-                long num = 0;
-                String[] parts = s.split("\\.");
-                for (String part : parts) {
-                        num = (num << 8) + Integer.parseInt(part);
+        void insert(String s, int dist, String hop) {
+                RTrie node = this;
+                for (int i = 0; i < dist; i++) {
+                        if (s.charAt(i) == '1') {
+                                if (node.one == null) {
+                                        node.one = new RTrie();
+                                }
+                                node = node.one;
+                        } else {
+                                if (node.zero == null) {
+                                        node.zero = new RTrie();
+                                }
+                                node = node.zero;
+                        }
                 }
-                return num;
+                node.hop = hop;
         }
 
-        boolean matches(String ip) {
-                long val = getNumNetwork(ip);
-                long mask = -1L << (32 - prefix);
-                return (val & mask) == (network & mask);
+        String getHop(String s) {
+                String res = null;
+                RTrie node = this;
+                for (int i = 0; i < 32 && node != null; i++) {
+                        if (node.hop != null) {
+                                res = node.hop;
+                        }
+
+                        if (s.charAt(i) == '1') {
+                                node = node.one;
+                        } else {
+                                node = node.zero;
+                        }
+                }
+
+                // Include a route stored at the final node.
+                if (node != null && node.hop != null) {
+                        res = node.hop;
+                }
+                return res;
         }
+
 }
 
 class Solution {
@@ -131,21 +149,36 @@ class Solution {
         public static Map<String, String> findNextHops(String[][] prefixEntries,
                         String[] ipAddresses) {
                 // TODO: Implement your solution here
-                List<Route> itr = new ArrayList<>();
+                RTrie trie = new RTrie();
                 for (String[] entry : prefixEntries) {
-                        itr.add( new Route(entry));
+                        String[] subnet = entry[0].split("/");
+                        String[] parts = subnet[0].split("\\.");
+                        String b = "";
+                        for (String part : parts) {
+                                // 1. Parse string as base-2 (binary) integer
+                                int num = Integer.parseInt(part);
 
-                }
-                Map<String, String> res = new HashMap<>();
-                for(String ip: ipAddresses){
-                        int cmax=-1;
-                        res.put(ip, null);
-                        for(Route r: itr){
-                                if(r.matches(ip) && r.prefix > cmax){
-                                        cmax= r.prefix;
-                                        res.put(ip, r.hop);
-                                }
+                                // 2. Convert back to binary and pad with zeros (Fixed parenthesis closing)
+                                b += String.format("%8s", Integer.toBinaryString(num)).replace(' ', '0');
                         }
+                        int prefix = Integer.parseInt(subnet[1]);
+                        trie.insert(b, prefix, entry[1]);
+                }
+
+                Map<String, String> res = new HashMap<>();
+                for (String ip : ipAddresses) {
+                        String[] parts = ip.split("\\.");
+                        String b = "";
+                        for (String part : parts) {
+                                // 1. Parse string as base-2 (binary) integer
+                                int num = Integer.parseInt(part);
+
+                                // 2. Convert back to binary and pad with zeros (Fixed parenthesis closing)
+                                b += String.format("%8s", Integer.toBinaryString(num)).replace(' ', '0');
+                        }
+
+                        res.put(ip, trie.getHop(b));
+
                 }
                 return res;
         }
